@@ -174,10 +174,6 @@ button.person:hover{border-color:var(--teal)}
 .slot.cater{background:#FBF7F1;border-color:#EAE0D2}
 .slot.done{opacity:.55}
 @media(max-width:600px){.slot{grid-template-columns:86px 1fr}.slot .cnt{grid-column:2}}
-.aidbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
-.aid{background:var(--pink-lt);border:1px solid #F8D3E5;border-radius:12px;padding:8px 13px;font-size:13.5px}
-.aid b{font-weight:700}
-.aid.on{border-color:var(--pink);border-width:2px}
 .site{font-size:11px;font-weight:800;padding:2px 7px;border-radius:999px;background:var(--teal-lt);color:var(--teal-dk)}
 .site.off{background:var(--warn-bg);color:var(--warn)}
 .feed{list-style:none;margin:0;padding:0;font-size:14.5px;max-height:330px;overflow:auto}
@@ -196,8 +192,6 @@ button.person:hover{border-color:var(--teal)}
 .tag{font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--ok-bg);color:var(--ok)}
 .tag.off{background:var(--warn-bg);color:var(--warn)}
 .tag.home{background:#EEF3F4;color:#4A5F63}
-.tbl input{padding:7px 9px;font-size:14px;border-radius:9px}
-.tbl input.mini{width:112px}
 .scroll{overflow-x:auto}
 
 /* ---- modal + lanyard ---- */
@@ -323,24 +317,8 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
       <div class="card">
         <div class="row" style="align-items:flex-end">
           <div style="flex:0 0 220px"><label for="dayPick">Day</label><select id="dayPick"></select></div>
-          <div style="flex:2 1 auto"><label>First aid on duty</label><div class="aidbar" id="aidbar"></div></div>
         </div>
         <div class="agenda" id="agenda" style="margin-top:16px"></div>
-      </div>
-
-      <div class="card">
-        <h2>Who's on first aid</h2>
-        <p class="lead">Change the roster whenever it moves — edit a row and press Save, or add a new shift.</p>
-        <div class="row" style="align-items:flex-end">
-          <div><label for="aidDate">Day</label><input id="aidDate" type="date"></div>
-          <div><label for="aidStart">From</label><input id="aidStart" type="time" value="07:00"></div>
-          <div><label for="aidEnd">Until</label><input id="aidEnd" type="time" value="13:00"></div>
-          <div style="flex:2 1 200px"><label for="aidWho">First aider</label><input id="aidWho" type="text" placeholder="Bella and Heidi"></div>
-          <div class="fit"><button class="btn primary" type="button" id="aidAdd">Add</button></div>
-        </div>
-        <p class="muted" style="margin-top:8px">An end time of 00:00 means midnight, so an overnight shift can run past it.</p>
-        <p class="status" id="aidStatus"></p>
-        <div class="scroll" style="margin-top:8px"><table class="tbl" id="aidTable"></table></div>
       </div>
 
       <div class="card">
@@ -383,7 +361,7 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
         </div>
         <div style="margin-top:16px">
           <label for="mBulk">Or paste a list — one person per line, crew after a comma</label>
-          <textarea id="mBulk" placeholder="Alex Moreno, Aurora Rover Unit&#10;Sam Whitlock, Attunga Rover Unit&#10;Priya Raman, Cover Rover Unit&#10;Jesse Okafor, Cover Rover Unit"></textarea>
+          <textarea id="mBulk" placeholder="Alex Moreno, Aurora Rover Unit&#10;Sam Whitlock, Attunga Rover Unit&#10;Priya Raman, Cove Rover Unit"></textarea>
           <button class="btn" type="button" id="mBulkAdd" style="margin-top:12px">Add everyone on the list</button>
         </div>
         <p class="status" id="mStatus"></p>

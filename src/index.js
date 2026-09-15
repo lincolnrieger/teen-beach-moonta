@@ -33,6 +33,79 @@ function newId(prefix) {
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+/* Bring a database built by an older version of this Worker up to date, in
+   place, without touching the roster. The old shape tracked an in/out flag and
+   the activity someone signed out to; this one tracks the single place they
+   are. Runs at most once per isolate and does nothing on a database that is
+   already current, or on one that has no tables yet — that is schema.sql's job. */
+let migrated = null;
+async function ensureSchema(env) {
+  if (!migrated) migrated = migrate(env).catch((err) => { migrated = null; throw err; });
+  return migrated;
+}
+
+async function columnsOf(env, table) {
+  try {
+    const r = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+    return new Set((r.results || []).map((c) => c.name));
+  } catch {
+    return new Set();
+  }
+}
+
+async function migrate(env) {
+  const [members, movements, activities] = await Promise.all([
+    columnsOf(env, "members"),
+    columnsOf(env, "movements"),
+    columnsOf(env, "activities")
+  ]);
+  const steps = [];
+
+  /* An activity is now marked on site or off site. */
+  if (activities.size && !activities.has("site")) {
+    steps.push("ALTER TABLE activities ADD COLUMN site TEXT DEFAULT 'on'");
+  }
+
+  /* state + act become a single place. */
+  if (members.size && !members.has("place")) {
+    steps.push(
+      "CREATE TABLE members_v2 (code TEXT PRIMARY KEY, name TEXT NOT NULL, crew TEXT, " +
+        "place TEXT NOT NULL DEFAULT 'onsite', since INTEGER, created INTEGER)",
+      "INSERT INTO members_v2 (code, name, crew, place, since, created) SELECT code, name, crew, " +
+        (members.has("state") && members.has("act")
+          ? "CASE WHEN state = 'out' AND act IS NOT NULL THEN act ELSE 'onsite' END"
+          : "'onsite'") +
+        ", since, created FROM members",
+      "DROP TABLE members",
+      "ALTER TABLE members_v2 RENAME TO members"
+    );
+  }
+
+  /* The movement log records where someone went, not which way they crossed the
+     gate. `dir` was NOT NULL with no default, so this table has to be rebuilt. */
+  if (movements.size && !movements.has("place")) {
+    steps.push(
+      "CREATE TABLE movements_v2 (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, " +
+        "place TEXT NOT NULL, t INTEGER NOT NULL)",
+      "INSERT INTO movements_v2 (id, code, place, t) SELECT id, code, " +
+        (movements.has("dir") && movements.has("act")
+          ? "CASE WHEN dir = 'in' THEN 'onsite' ELSE COALESCE(act, 'onsite') END"
+          : "'onsite'") +
+        ", t FROM movements",
+      "DROP TABLE movements",
+      "ALTER TABLE movements_v2 RENAME TO movements",
+      "CREATE INDEX IF NOT EXISTS movements_t ON movements (t DESC)"
+    );
+  }
+
+  /* The first aid roster lived here briefly and is gone again. */
+  steps.push("DROP TABLE IF EXISTS aiders");
+
+  if (steps.length === 1) return;   /* nothing but the unconditional drop */
+  for (const sql of steps) await env.DB.prepare(sql).run();
+  await bumpRev(env);
+}
+
 async function handleApi(request, env, url) {
   const path = url.pathname.replace(/^\/api\/?/, "");
   const method = request.method;
@@ -48,16 +121,17 @@ async function handleApi(request, env, url) {
   /* --- everything below is staff only --- */
   if (!staffOk(request, env)) return bad("Wrong PIN.", 401);
 
+  await ensureSchema(env);
+
   if (path === "rev") {
     const row = await env.DB.prepare("SELECT v FROM meta WHERE k = 'rev'").first();
     return json({ rev: row ? row.v : "0" });
   }
 
   if (path === "state") {
-    const [members, activities, aiders, movements, rev] = await Promise.all([
+    const [members, activities, movements, rev] = await Promise.all([
       env.DB.prepare("SELECT * FROM members ORDER BY name").all(),
       env.DB.prepare("SELECT * FROM activities ORDER BY date, start").all(),
-      env.DB.prepare("SELECT * FROM aiders ORDER BY date, start").all(),
       env.DB.prepare(
         "SELECT m.t, m.place, m.code, p.name FROM movements m LEFT JOIN members p ON p.code = m.code ORDER BY m.t DESC LIMIT 80"
       ).all(),
@@ -66,7 +140,6 @@ async function handleApi(request, env, url) {
     return json({
       members: members.results,
       activities: activities.results.map((a) => ({ ...a, dest: !!a.dest })),
-      aiders: aiders.results,
       movements: movements.results,
       rev: rev ? rev.v : "0"
     });
@@ -170,40 +243,13 @@ async function handleApi(request, env, url) {
     return json({ ok: true });
   }
 
-  if (path === "aiders" && method === "POST") {
-    const a = await request.json();
-    const who = String(a.who || "").trim();
-    if (!who) return bad("Say who is on duty.");
-    if (!a.date) return bad("Pick a day.");
-    const id = newId("f");
-    await env.DB.prepare("INSERT INTO aiders (id, date, start, end, who) VALUES (?, ?, ?, ?, ?)")
-      .bind(id, a.date, a.start || "07:00", a.end || "19:00", who).run();
-    await bumpRev(env);
-    return json({ ok: true, id });
-  }
-
-  if (path.startsWith("aiders/") && method === "PATCH") {
-    const a = await request.json();
-    const who = String(a.who || "").trim();
-    if (!who) return bad("Say who is on duty.");
-    await env.DB.prepare("UPDATE aiders SET who = ?, start = ?, end = ? WHERE id = ?")
-      .bind(who, a.start || "07:00", a.end || "19:00", path.slice(7)).run();
-    await bumpRev(env);
-    return json({ ok: true });
-  }
-
-  if (path.startsWith("aiders/") && method === "DELETE") {
-    await env.DB.prepare("DELETE FROM aiders WHERE id = ?").bind(path.slice(7)).run();
-    await bumpRev(env);
-    return json({ ok: true });
-  }
-
   return bad("Unknown endpoint.", 404);
 }
 
 /* A plain page for one person: their code as a QR code and a barcode. Send them
    https://your-site/p/THEIRCODE and they can keep it on their phone. */
 async function personPage(code, env) {
+  await ensureSchema(env);
   const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code.toUpperCase()).first();
   const event = env.EVENT_NAME || "Teen Beach Moonta";
   if (!member) {
