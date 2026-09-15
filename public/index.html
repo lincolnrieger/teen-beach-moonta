@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teen Beach Moonta — camp check in and out</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme:light;
+  --teal:#2BA8A0; --teal-dk:#1B7F79; --teal-lt:#E3F5F3;
+  --pink:#F5459B; --pink-lt:#FDE6F1;
+  --yellow:#FFD23F; --yellow-lt:#FFF6DA;
+  --orange:#F5871F; --coral:#FF6F61;
+  --sand:#FBE3BD;
+  --ink:#16333A; --dim:#5F7A80;
+  --paper:#FFFFFF; --soft:#F4F9F9; --line:#DCE7E7;
+  --ok:#17845F; --ok-bg:#E2F5EC;
+  --warn-bg:#FFF0D6; --warn:#A4650B;
+  --bad:#C0392B; --bad-bg:#FCE7E4;
+  --shadow:0 10px 28px rgba(22,51,58,.10);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#fff}
+body{
+  color:var(--ink);background:#fff;
+  font-family:"Archivo","Helvetica Neue",Arial,sans-serif;font-size:16px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,.fun{font-family:"Fredoka","Archivo",sans-serif;font-weight:600;letter-spacing:.005em}
+[hidden]{display:none !important}
+:focus-visible{outline:3px solid var(--teal);outline-offset:2px;border-radius:8px}
+
+/* ---- masthead ---- */
+.hero{background:var(--teal);color:#fff;padding:18px 0 0;position:relative}
+.hero-in{max-width:1180px;margin:0 auto;padding:0 18px 6px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.badge{width:74px;height:74px;border-radius:50%;flex:0 0 auto;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.hero h1{margin:0;font-size:clamp(23px,4.2vw,32px);line-height:1.05;font-weight:700}
+.hero p{margin:3px 0 0;font-size:14px;opacity:.92;font-weight:500}
+.tally{margin-left:auto;display:flex;gap:8px}
+.tally div{background:rgba(255,255,255,.16);border-radius:12px;padding:7px 14px;text-align:center;min-width:74px}
+.tally b{display:block;font-size:22px;line-height:1.1;font-family:"Fredoka",sans-serif;font-weight:600}
+.tally small{font-size:11px;opacity:.9;font-weight:600}
+.tally .hot{background:var(--coral)}
+.wave{display:block;width:100%;height:34px}
+
+.wrap{max-width:1180px;margin:0 auto;padding:0 18px 70px}
+
+/* ---- tabs ---- */
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
+.tab{
+  font:inherit;font-family:"Fredoka",sans-serif;font-size:16px;font-weight:500;
+  padding:10px 18px;border-radius:999px;border:2px solid var(--line);
+  background:#fff;color:var(--dim);cursor:pointer;
+}
+.tab:hover{color:var(--ink);border-color:var(--teal)}
+.tab[aria-selected="true"]{background:var(--teal);border-color:var(--teal);color:#fff}
+
+.banner{border-radius:14px;padding:12px 15px;font-size:14.5px;margin-bottom:16px;background:var(--yellow-lt);border:1px solid #F1E0AE}
+.banner.bad{background:var(--bad-bg);border-color:#F3C9C2}
+
+.lead{font-size:15px;color:var(--dim);margin:0 0 14px}
+.card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:var(--shadow)}
+.card + .card{margin-top:18px}
+h2{font-size:21px;margin:0 0 4px}
+h3{font-size:13px;font-weight:700;letter-spacing:.06em;color:var(--dim);margin:0 0 10px;font-family:"Archivo",sans-serif;text-transform:none}
+.muted{color:var(--dim);font-size:14px}
+.empty{color:var(--dim);font-size:15px;padding:22px;text-align:center;border:2px dashed var(--line);border-radius:14px}
+
+label{display:block;font-size:13.5px;font-weight:700;color:var(--dim);margin-bottom:6px}
+input,textarea,select{
+  width:100%;padding:12px 14px;font:inherit;font-size:15px;color:var(--ink);
+  background:#fff;border:2px solid var(--line);border-radius:12px;
+}
+input:focus,textarea:focus,select:focus{border-color:var(--teal);outline:none}
+textarea{min-height:100px;resize:vertical}
+.btn{
+  font:inherit;font-size:15px;font-weight:700;padding:12px 18px;border-radius:12px;cursor:pointer;
+  background:#fff;color:var(--ink);border:2px solid var(--line);
+}
+.btn:hover{border-color:var(--teal)}
+.btn.primary{background:var(--pink);border-color:var(--pink);color:#fff}
+.btn.primary:hover{filter:brightness(1.05)}
+.btn.teal{background:var(--teal);border-color:var(--teal);color:#fff}
+.btn.small{font-size:13.5px;padding:8px 12px;border-radius:10px;font-weight:600}
+.btn.danger{color:var(--bad)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row > *{flex:1 1 170px}
+.row .fit{flex:0 0 auto}
+
+/* ---- station ---- */
+.station{display:grid;gap:18px;grid-template-columns:1fr}
+@media(min-width:960px){.station{grid-template-columns:minmax(0,1.15fr) minmax(330px,.85fr);align-items:start}}
+.step{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+.step b{
+  width:26px;height:26px;border-radius:50%;background:var(--teal);color:#fff;
+  display:grid;place-items:center;font-size:14px;font-family:"Fredoka",sans-serif;flex:0 0 auto;
+}
+.step h2{margin:0}
+.dests{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.dest{
+  font:inherit;text-align:left;cursor:pointer;padding:12px 14px;border-radius:14px;
+  border:2px solid var(--line);background:#fff;color:var(--ink);
+}
+.dest b{display:block;font-size:15.5px;font-weight:700;line-height:1.2}
+.dest small{display:block;font-size:12px;color:var(--dim);margin-top:3px}
+.dest:hover{border-color:var(--teal)}
+.dest[aria-pressed="true"]{background:var(--teal);border-color:var(--teal);color:#fff}
+.dest[aria-pressed="true"] small{color:rgba(255,255,255,.85)}
+.dest.off[aria-pressed="true"]{background:var(--orange);border-color:var(--orange)}
+.modes{display:flex;gap:6px;background:var(--soft);padding:5px;border-radius:12px;flex-wrap:wrap}
+.modes button{
+  flex:1 1 auto;font:inherit;font-size:13.5px;font-weight:700;padding:9px 10px;border:0;border-radius:9px;
+  background:transparent;color:var(--dim);cursor:pointer;
+}
+.modes button[aria-pressed="true"]{background:#fff;color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.12)}
+#scan{font-size:24px;font-weight:700;padding:18px;letter-spacing:.14em;text-transform:uppercase;text-align:center;border-color:var(--teal)}
+.ready{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--dim);margin-top:8px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+@media(prefers-reduced-motion:no-preference){.dot{animation:blip 2s ease-in-out infinite}}
+@keyframes blip{0%,100%{opacity:1}50%{opacity:.25}}
+.videowrap{margin-top:12px;position:relative;border-radius:14px;overflow:hidden;background:#000;aspect-ratio:4/3}
+.videowrap video{width:100%;height:100%;object-fit:cover;display:block}
+.reticle{position:absolute;inset:16%;border:3px solid rgba(255,255,255,.9);border-radius:14px}
+
+.result{border-radius:18px;padding:24px;border:2px solid var(--line);background:var(--soft);min-height:200px;display:flex;flex-direction:column;justify-content:center}
+.result.out{background:var(--warn-bg);border-color:#EFD49B}
+.result.in{background:var(--ok-bg);border-color:#BCE3D1}
+.result.bad{background:var(--bad-bg);border-color:#F3C9C2}
+.result .who{font-family:"Fredoka",sans-serif;font-size:clamp(26px,4.6vw,36px);font-weight:600;line-height:1.1}
+.result .what{font-size:17px;font-weight:600;margin-top:8px}
+.result .when{font-size:13.5px;color:var(--dim);margin-top:8px}
+.result.flash{animation:pop .25s ease-out}
+@keyframes pop{from{transform:scale(.97);opacity:.5}to{transform:none;opacity:1}}
+@media(prefers-reduced-motion:reduce){.result.flash{animation:none}}
+.recent{list-style:none;margin:12px 0 0;padding:0;font-size:14.5px}
+.recent li{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+.recent span{color:var(--dim);font-size:13px;white-space:nowrap}
+
+/* ---- board ---- */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:18px}
+.stat{border-radius:16px;padding:16px 18px;background:var(--teal-lt);border:1px solid #CDE9E6}
+.stat b{display:block;font-size:34px;line-height:1.05;font-family:"Fredoka",sans-serif;font-weight:600}
+.stat small{font-size:12.5px;font-weight:600;color:var(--dim)}
+.stat.pink{background:var(--pink-lt);border-color:#F8D3E5}
+.stat.warn{background:var(--warn-bg);border-color:#EFD49B}
+.stat.warn b{color:var(--bad)}
+.group{margin-bottom:20px}
+.group-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;border-bottom:2px solid var(--line);padding-bottom:8px;margin-bottom:12px}
+.group-head h3{margin:0;color:var(--ink);font-size:17px;font-family:"Fredoka",sans-serif;font-weight:600;letter-spacing:0}
+.group-head em{font-style:normal;color:var(--dim);font-size:13px}
+.people{display:flex;gap:10px;flex-wrap:wrap}
+.person{background:#fff;border:2px solid var(--line);border-radius:12px;padding:9px 12px;font-size:14.5px;min-width:140px}
+.person b{display:block;font-weight:700}
+.person small{color:var(--dim);font-size:12px}
+button.person{font:inherit;text-align:left;cursor:pointer}
+button.person:hover{border-color:var(--teal)}
+.person.late{border-color:var(--coral);background:var(--bad-bg)}
+.person.late small{color:var(--bad);font-weight:700}
+
+/* ---- programme ---- */
+.agenda{display:flex;flex-direction:column;gap:8px}
+.slot{display:grid;grid-template-columns:104px 1fr auto;gap:12px;align-items:center;padding:12px 14px;border:2px solid var(--line);border-radius:14px}
+.slot .tm{font-weight:700;font-size:14px;color:var(--dim);font-variant-numeric:tabular-nums}
+.slot .nm{font-weight:700;font-size:16px}
+.slot .nm small{display:block;font-weight:500;font-size:12.5px;color:var(--dim)}
+.slot .cnt{font-size:13px;font-weight:700;color:var(--teal-dk);white-space:nowrap}
+.slot.now{border-color:var(--teal);background:var(--teal-lt)}
+.slot.meal{background:var(--yellow-lt);border-color:#F1E0AE}
+.slot.cater{background:#FBF7F1;border-color:#EAE0D2}
+.slot.done{opacity:.55}
+@media(max-width:600px){.slot{grid-template-columns:86px 1fr}.slot .cnt{grid-column:2}}
+.aidbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.aid{background:var(--pink-lt);border:1px solid #F8D3E5;border-radius:12px;padding:8px 13px;font-size:13.5px}
+.aid b{font-weight:700}
+.feed{list-style:none;margin:0;padding:0;font-size:14.5px;max-height:330px;overflow:auto}
+.feed li{display:flex;gap:10px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line)}
+.feed time{color:var(--dim);font-size:12.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pill{font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;background:var(--warn-bg);color:var(--warn)}
+.pill.in{background:var(--ok-bg);color:var(--ok)}
+
+/* ---- tables ---- */
+.tbl{width:100%;border-collapse:collapse;font-size:14.5px}
+.tbl th{text-align:left;font-size:12px;color:var(--dim);font-weight:700;padding:0 8px 9px 0;border-bottom:2px solid var(--line)}
+.tbl td{padding:11px 8px 11px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl td.code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;font-size:14px;font-weight:600}
+.tbl .actions{text-align:right;white-space:nowrap}
+.tag{font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:999px;background:var(--ok-bg);color:var(--ok)}
+.tag.out{background:var(--warn-bg);color:var(--warn)}
+.scroll{overflow-x:auto}
+
+/* ---- modal + lanyard ---- */
+.modal{position:fixed;inset:0;background:rgba(16,50,56,.55);display:grid;place-items:center;padding:18px;z-index:40}
+.sheet{background:#fff;border-radius:20px;padding:22px;max-width:440px;width:100%;box-shadow:0 30px 60px rgba(0,0,0,.3);max-height:92vh;overflow:auto}
+.lanyard{background:#fff;color:#16333A;border:2px solid var(--line);border-radius:14px;padding:16px;display:flex;gap:14px;align-items:center}
+.lanyard .qr{width:118px;flex:0 0 118px}
+.lanyard .qr svg{width:100%;height:auto;display:block}
+.lanyard .side{min-width:0;flex:1 1 auto}
+.lanyard .nm{font-family:"Fredoka",sans-serif;font-size:21px;font-weight:600;line-height:1.15}
+.lanyard .cr{font-size:12.5px;color:var(--dim);margin-top:2px}
+.lanyard .bc{margin-top:9px}
+.lanyard .bc svg{max-width:100%;height:34px}
+.lanyard .cd{font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.2em;color:#4A5F63;margin-top:3px;font-weight:600}
+.lanyard .ev{font-size:11px;color:var(--teal-dk);font-weight:700;margin-top:7px}
+.gate{position:fixed;inset:0;background:#2BA8A0;display:grid;place-items:center;padding:20px;z-index:60}
+.gatebox{background:#fff;border-radius:22px;padding:28px;max-width:340px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.25)}
+.gatebox img{border-radius:50%}
+.gatebox h1{font-size:23px;margin:14px 0 6px}
+.status{font-size:13.5px;color:var(--dim);margin-top:10px;min-height:1.3em}
+details{margin-top:12px}
+summary{cursor:pointer;font-size:13.5px;font-weight:700;color:var(--teal-dk)}
+details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
+</style>
+</head>
+<body>
+
+<div class="gate" id="gate" hidden>
+  <form class="gatebox" id="gateForm">
+    <img src="/logo.png" alt="" width="96" height="96">
+    <h1>Teen Beach Moonta</h1>
+    <p class="muted">Enter the staff PIN to open the check in board.</p>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="text-align:center;letter-spacing:.3em;font-size:20px">
+    <button class="btn primary" type="submit" style="width:100%;margin-top:12px">Open the board</button>
+    <p class="status" id="gateStatus"></p>
+  </form>
+</div>
+
+<div class="hero">
+  <div class="hero-in">
+    <img class="badge" id="heroLogo" src="/logo.png" alt="Teen Beach Moonta">
+    <div>
+      <h1>Teen Beach Moonta</h1>
+      <p>Branchmoot 2026 · 2–5 October · who's on site, who's away</p>
+    </div>
+    <div class="tally" id="tally"></div>
+  </div>
+  <svg class="wave" viewBox="0 0 1200 40" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 22 C 150 44 250 2 400 14 C 550 26 620 44 780 30 C 920 18 1050 0 1200 16 L1200 40 L0 40 Z" fill="#fff"/>
+  </svg>
+</div>
+
+<div class="wrap">
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-view="station" aria-selected="true">Check in &amp; out</button>
+    <button class="tab" role="tab" data-view="board" aria-selected="false">Who's where</button>
+    <button class="tab" role="tab" data-view="schedule" aria-selected="false">Programme</button>
+    <button class="tab" role="tab" data-view="members" aria-selected="false">People &amp; passes</button>
+  </nav>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main>
+    <!-- STATION -->
+    <section class="view" id="view-station">
+      <div class="station">
+        <div>
+          <div class="card">
+            <div class="step"><b>1</b><h2>Pick where they're going</h2></div>
+            <div class="dests" id="dests"></div>
+            <div class="row" style="margin-top:12px">
+              <label class="muted fit" style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--dim);margin:0">
+                <input type="checkbox" id="showAll" style="width:18px;height:18px;flex:0 0 auto"> Show every programme item
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="step"><b>2</b><h2>Scan the lanyard</h2></div>
+            <input id="scan" type="text" autocomplete="off" spellcheck="false" placeholder="●●●●●●">
+            <div class="ready"><span class="dot"></span><span id="scanHint">Ready — a scanner types the code and hits enter. You can also type it by hand.</span></div>
+            <div class="row" style="margin-top:12px">
+              <button class="btn small fit" type="button" id="camBtn">Use the camera</button>
+              <button class="btn small fit" type="button" id="findBtn">Find someone by name</button>
+              <button class="btn small fit" type="button" id="undoBtn" disabled>Undo last scan</button>
+            </div>
+            <div class="videowrap" id="camWrap" hidden><video id="video" playsinline muted></video><div class="reticle"></div></div>
+            <div id="findWrap" hidden style="margin-top:12px">
+              <input id="findInput" type="search" placeholder="Start typing a name…" autocomplete="off">
+              <div class="people" id="findResults" style="margin-top:10px"></div>
+            </div>
+            <div class="modes" id="modes" style="margin-top:14px">
+              <button type="button" data-mode="auto" aria-pressed="true">Automatic</button>
+              <button type="button" data-mode="out" aria-pressed="false">Always sign out</button>
+              <button type="button" data-mode="in" aria-pressed="false">Always sign in</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="result" id="result">
+            <div class="who" id="resWho">Ready to scan</div>
+            <div class="what" id="resWhat">Pick a destination, then scan a lanyard.</div>
+            <div class="when" id="resWhen"></div>
+          </div>
+          <div class="card" style="margin-top:18px">
+            <h3>Last scans</h3>
+            <ul class="recent" id="recent"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- BOARD -->
+    <section class="view" id="view-board" hidden>
+      <div class="stats" id="boardStats"></div>
+      <div class="card">
+        <input id="boardSearch" type="search" placeholder="Search a name, crew or code…" autocomplete="off" style="margin-bottom:16px">
+        <div id="boardGroups"></div>
+      </div>
+    </section>
+
+    <!-- PROGRAMME -->
+    <section class="view" id="view-schedule" hidden>
+      <div class="card">
+        <div class="row" style="align-items:flex-end">
+          <div style="flex:0 0 220px"><label for="dayPick">Day</label><select id="dayPick"></select></div>
+          <div style="flex:2 1 auto"><label>First aid on duty</label><div class="aidbar" id="aidbar"></div></div>
+        </div>
+        <div class="agenda" id="agenda" style="margin-top:16px"></div>
+      </div>
+
+      <div class="card">
+        <h2>Movement log</h2>
+        <p class="lead">Every sign out and sign in, newest first.</p>
+        <ul class="feed" id="feed"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Add to the programme</h2>
+        <p class="lead">Anything you add here becomes a destination at the check in desk.</p>
+        <div class="row">
+          <div style="flex:2 1 220px"><label for="actName">Activity</label><input id="actName" type="text" placeholder="Beach games"></div>
+          <div><label for="actLoc">Where</label><input id="actLoc" type="text" placeholder="Moonta Bay foreshore"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <div><label for="actDate">Date</label><input id="actDate" type="date"></div>
+          <div><label for="actStart">Starts</label><input id="actStart" type="time" value="09:00"></div>
+          <div><label for="actEnd">Ends</label><input id="actEnd" type="time" value="12:00"></div>
+          <div class="fit" style="align-self:flex-end"><button class="btn primary" type="button" id="actAdd">Add</button></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:9px;margin-top:12px;font-weight:600">
+          <input type="checkbox" id="actDest" checked style="width:18px;height:18px;flex:0 0 auto"> People sign out to this — show it at the desk
+        </label>
+        <p class="status" id="actStatus"></p>
+        <div class="scroll" style="margin-top:8px"><table class="tbl" id="actTable"></table></div>
+      </div>
+    </section>
+
+    <!-- PEOPLE -->
+    <section class="view" id="view-members" hidden>
+      <div class="card">
+        <h2>Add people</h2>
+        <p class="lead">Everyone gets their own six character code, printed as a QR code and a barcode.</p>
+        <div class="row">
+          <div style="flex:2 1 220px"><label for="mName">Name</label><input id="mName" type="text" placeholder="Alex Moreno"></div>
+          <div><label for="mCrew">Crew or role</label><input id="mCrew" type="text" placeholder="Southern Rovers"></div>
+          <div class="fit" style="align-self:flex-end"><button class="btn primary" type="button" id="mAdd">Add</button></div>
+        </div>
+        <div style="margin-top:16px">
+          <label for="mBulk">Or paste a list — one person per line, crew after a comma</label>
+          <textarea id="mBulk" placeholder="Alex Moreno, Southern Rovers&#10;Sam Whitlock, Southern Rovers&#10;Priya Raman, Catering"></textarea>
+          <button class="btn" type="button" id="mBulkAdd" style="margin-top:12px">Add everyone on the list</button>
+        </div>
+        <p class="status" id="mStatus"></p>
+      </div>
+
+      <div class="card">
+        <div class="row" style="align-items:center;margin-bottom:6px">
+          <h2 style="margin:0;flex:1 1 200px">Lanyard cards</h2>
+          <button class="btn teal fit" type="button" id="sheetBtn">Download the print sheet</button>
+        </div>
+        <p class="lead">Cards print at 86 × 54 mm, two per row — the size of a standard lanyard pouch.</p>
+        <input id="mSearch" type="search" placeholder="Search…" autocomplete="off" style="margin-bottom:14px">
+        <p class="status" id="sheetStatus"></p>
+        <div class="scroll"><table class="tbl" id="memTable"></table></div>
+      </div>
+
+      <div class="card">
+        <h3>How people get their pass</h3>
+        <p class="muted">Every person has their own page at <b id="siteBase"></b>/p/THEIRCODE. Open a card above and copy the link — send it by text or email and they can add the pass to their phone themselves. The printed cards work on their own, no phone needed.</p>
+        <p class="muted" id="deployNote" style="margin-top:10px"></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="sheet">
+    <div class="lanyard" id="lanyard"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary" type="button" id="cardPng">Save card as an image</button>
+      <button class="btn fit" type="button" id="cardClose">Close</button>
+    </div>
+    <p class="status" id="cardStatus"></p>
+    <div class="row" style="margin-top:10px">
+      <button class="btn fit" type="button" id="cardWallet">Add to Apple Wallet</button>
+      <button class="btn fit" type="button" id="cardLink">Copy their own page link</button>
+    </div>
+    <p class="muted" id="walletNote" style="margin-top:10px"></p>
+  </div>
+</div>
+
+<script src="/vendor/JsBarcode.all.min.js"></script>
+<script src="/vendor/qrcode.js"></script>
+<script src="/vendor/jsQR.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
