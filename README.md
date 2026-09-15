@@ -14,8 +14,6 @@ push.
   with anyone past an off-site activity's return time flagged.
 - **Programme** — all four days are loaded from the Branch Moot schedule, each
   activity marked on site or off site. Add your own in the app.
-- **First aid** — the roster is loaded too, and you can change who's on duty
-  from the Programme tab whenever it moves.
 - **People & cards** — everyone gets a six character code as a QR code *and* a
   barcode. Printable card sheet, phone image, or their own web page.
 
@@ -61,6 +59,12 @@ npm run db:remote
 > `schema.sql` drops every table before it rebuilds them, so running it a second
 > time wipes the roster along with everything else. Run it once at setup, and
 > again only when you really do want to start from scratch.
+>
+> If you already have a database from an earlier version of this Worker, you
+> don't need to re-run it. The Worker upgrades the tables in place the first
+> time it's asked for anything, keeping everyone's codes and where they are.
+> Your existing activities come across marked **on site** — open the Programme
+> tab and fix any that are actually off site.
 
 Commit and push that change — `git add . && git commit -m "database id" && git push`.
 
@@ -99,8 +103,7 @@ not for the camp.
    ```
    Alex Moreno, Aurora Rover Unit
    Sam Whitlock, Attunga Rover Unit
-   Priya Raman, Cover Rover Unit
-   Jesse Okafor, Cover Rover Unit
+   Priya Raman, Cove Rover Unit
    ```
 
 2. Send each person `https://your-site/p/THEIRCODE` (the **Copy their own page
@@ -115,13 +118,6 @@ not for the camp.
 The board never grabs focus on a touch device, so the on-screen keyboard stays
 shut while you're scanning. **Scan with the camera** is the first button on the
 panel; the code box below it only opens the keyboard if you tap it on purpose.
-
-### Changing the first aid roster
-
-**Programme → Who's on first aid.** Edit a shift's times or name and press
-**Save**, remove one, or add a new one. An end time of `00:00` means midnight, so
-an overnight shift can run past it. The day's roster shows at the top of the
-Programme tab with whoever's on duty right now highlighted.
 
 ### On site and off site
 
@@ -152,6 +148,6 @@ public/index.html   the board (markup + styles)
 public/app.js       all the front end logic
 public/vendor/      QR generator, QR scanner, barcode generator
 src/index.js        the Worker: API, person pages, static assets
-schema.sql          database tables, the four day programme, first aid roster
+schema.sql          database tables and the four day programme
 wrangler.jsonc      Cloudflare settings
 ```

@@ -36,7 +36,6 @@
 
   var members = new Map();
   var activities = new Map();
-  var aiders = [];
   var movements = [];
   var config = { pinRequired: false };
   var rev = null;
@@ -72,7 +71,6 @@
       state.members.forEach(function (m) { members.set(m.code, m); });
       activities.clear();
       state.activities.forEach(function (a) { activities.set(a.id, a); });
-      aiders = state.aiders || [];
       movements = state.movements || [];
       renderAll();
     } catch (e) { /* offline or locked — keep showing the last board */ }
@@ -105,12 +103,6 @@
     return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0);
   }
   function nowMins() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
-  /* An end time at or before the start means it runs past midnight. */
-  function spanOn(row, nm) {
-    var s = mins(row.start), e = mins(row.end);
-    if (e <= s) e += 1440;
-    return (nm >= s && nm < e) || (nm + 1440 >= s && nm + 1440 < e);
-  }
   function dayLabel(d) {
     var t = new Date(d + "T12:00:00");
     return isNaN(t.getTime()) ? d : t.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
@@ -151,9 +143,6 @@
   }
   function sortedActivities() {
     return Array.from(activities.values()).sort(function (a, b) { return (a.date + a.start).localeCompare(b.date + b.start); });
-  }
-  function sortedAiders() {
-    return aiders.slice().sort(function (a, b) { return (a.date + a.start).localeCompare(b.date + b.start); });
   }
 
   /* ---------------- QR + barcode ---------------- */
@@ -416,8 +405,7 @@
   }
   function renderSchedule() {
     var acts = sortedActivities();
-    var days = Array.from(new Set(acts.map(function (a) { return a.date; })
-      .concat(aiders.map(function (a) { return a.date; }))));
+    var days = Array.from(new Set(acts.map(function (a) { return a.date; })));
     if (days.indexOf(todayISO()) < 0) days.push(todayISO());
     days.sort();
     if (!ui.day || days.indexOf(ui.day) < 0) ui.day = days.indexOf(todayISO()) >= 0 ? todayISO() : days[0];
@@ -426,11 +414,6 @@
     }).join("");
 
     var isToday = ui.day === todayISO(), nm = nowMins();
-    $("aidbar").innerHTML = sortedAiders().filter(function (a) { return a.date === ui.day; }).map(function (a) {
-      var on = isToday && spanOn(a, nm);
-      return '<div class="aid' + (on ? " on" : "") + '"><b>' + esc(a.who) + "</b> " +
-        esc(a.start) + "–" + esc(a.end === "00:00" ? "midnight" : a.end) + (on ? " · on duty now" : "") + "</div>";
-    }).join("") || '<div class="muted">Nobody rostered for this day yet — add them below.</div>';
 
     var counts = new Map();
     members.forEach(function (m) { counts.set(m.place, (counts.get(m.place) || 0) + 1); });
@@ -455,17 +438,6 @@
         (e.place === "home" ? "went home" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
         "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">No movements recorded yet.</li>';
-
-    $("aidTable").innerHTML = aiders.length
-      ? "<thead><tr><th>Day</th><th>From</th><th>Until</th><th>First aider</th><th></th></tr></thead><tbody>" +
-      sortedAiders().map(function (a) {
-        return "<tr><td>" + esc(dayLabel(a.date)) + '</td><td><input class="mini" type="time" data-aidstart="' + esc(a.id) +
-          '" value="' + esc(a.start) + '"></td><td><input class="mini" type="time" data-aidend="' + esc(a.id) +
-          '" value="' + esc(a.end) + '"></td><td><input type="text" data-aidwho="' + esc(a.id) + '" value="' + esc(a.who) +
-          '"></td><td class="actions"><button class="btn small" data-aidsave="' + esc(a.id) + '">Save</button> ' +
-          '<button class="btn small danger" data-aiddel="' + esc(a.id) + '">Remove</button></td></tr>';
-      }).join("") + "</tbody>"
-      : "<tbody><tr><td class='muted'>No first aiders rostered yet.</td></tr></tbody>";
 
     $("actTable").innerHTML = acts.length
       ? "<thead><tr><th>Activity</th><th>When</th><th>Where</th><th>Site</th><th>At the desk</th><th>There</th><th></th></tr></thead><tbody>" +
@@ -695,47 +667,6 @@
     });
   });
 
-  /* ---- first aid roster ---- */
-  $("aidAdd").addEventListener("click", async function () {
-    var who = $("aidWho").value.trim();
-    if (!who) { $("aidStatus").textContent = "Say who is on duty."; return; }
-    try {
-      await api("aiders", {
-        method: "POST",
-        body: { date: $("aidDate").value || ui.day || todayISO(), start: $("aidStart").value || "07:00", end: $("aidEnd").value || "19:00", who: who }
-      });
-      $("aidWho").value = "";
-      $("aidStatus").textContent = "Added to the roster.";
-      refresh(true);
-    } catch (e) { $("aidStatus").textContent = e.message || "That didn't save."; }
-  });
-  $("aidTable").addEventListener("click", async function (e) {
-    var save = e.target.closest("[data-aidsave]");
-    if (save) {
-      var id = save.dataset.aidsave;
-      try {
-        await api("aiders/" + id, {
-          method: "PATCH",
-          body: {
-            who: $("aidTable").querySelector('[data-aidwho="' + id + '"]').value,
-            start: $("aidTable").querySelector('[data-aidstart="' + id + '"]').value,
-            end: $("aidTable").querySelector('[data-aidend="' + id + '"]').value
-          }
-        });
-        $("aidStatus").textContent = "Roster updated.";
-        refresh(true);
-      } catch (err) { $("aidStatus").textContent = err.message || "That didn't save."; }
-      return;
-    }
-    var del = e.target.closest("[data-aiddel]");
-    if (del) {
-      arm(del, "aid:" + del.dataset.aiddel, "Remove?", async function () {
-        await api("aiders/" + del.dataset.aiddel, { method: "DELETE" }).catch(function () {});
-        refresh(true);
-      });
-    }
-  });
-
   async function addPeople(people, statusEl) {
     try {
       var res = await api("members", { method: "POST", body: { people: people } });
@@ -795,7 +726,6 @@
   /* ---------------- boot ---------------- */
   (async function start() {
     $("actDate").value = "2026-10-03";
-    $("aidDate").value = "2026-10-03";
     if (TOUCH) {
       document.body.classList.add("touch");
       $("scan").setAttribute("readonly", "readonly");

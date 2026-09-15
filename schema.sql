@@ -8,7 +8,6 @@
 DROP TABLE IF EXISTS members;
 DROP TABLE IF EXISTS movements;
 DROP TABLE IF EXISTS activities;
-DROP TABLE IF EXISTS aiders;
 DROP TABLE IF EXISTS meta;
 
 -- Everyone at camp. `place` is where they are right now: 'onsite', 'home',
@@ -41,15 +40,6 @@ CREATE TABLE activities (
   kind  TEXT DEFAULT 'main',             -- main | extra | onsite | meal | cater | camp
   site  TEXT DEFAULT 'on',               -- 'on' = on site, 'off' = away from camp
   dest  INTEGER DEFAULT 1                -- 1 = offer it as a place at the desk
-);
-
--- First aid roster. Editable in the app under Programme.
-CREATE TABLE aiders (
-  id    TEXT PRIMARY KEY,
-  date  TEXT NOT NULL,                   -- YYYY-MM-DD
-  start TEXT NOT NULL,                   -- HH:MM
-  end   TEXT NOT NULL,                   -- HH:MM; '00:00' means midnight
-  who   TEXT NOT NULL
 );
 
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT);
@@ -146,23 +136,3 @@ INSERT INTO activities (id, name, loc, date, start, end, kind, site, dest) VALUE
  ('mon-lunch',           'Lunch',                         '',            '2026-10-05', '12:00', '12:30', 'meal',  'on',  1),
  ('mon-closing',         'Closing Ceremony',              '',            '2026-10-05', '13:00', '13:30', 'main',  'on',  1),
  ('mon-campsite-closes', 'Campsite Closes',               '',            '2026-10-05', '15:00', '15:30', 'camp',  'on',  0);
-
--- ---------------------------------------------------------------------------
--- First aid roster, from the same sheet. '00:00' as an end time means midnight.
--- ---------------------------------------------------------------------------
-INSERT INTO aiders (id, date, start, end, who) VALUES
- ('aid-fri-1', '2026-10-02', '06:00', '19:00', 'Jordan and Victor'),
- ('aid-fri-2', '2026-10-02', '19:00', '21:00', 'Bella and Heidi'),
- ('aid-fri-3', '2026-10-02', '21:00', '21:30', 'Bella and Scott'),
- ('aid-fri-4', '2026-10-02', '21:30', '00:00', 'Bella and Heidi'),
- ('aid-sat-1', '2026-10-03', '00:00', '07:00', 'Ethan (overnight)'),
- ('aid-sat-2', '2026-10-03', '07:00', '13:00', 'Bella'),
- ('aid-sat-3', '2026-10-03', '13:00', '19:00', 'Victor'),
- ('aid-sat-4', '2026-10-03', '19:00', '00:00', 'Ethan and Heidi'),
- ('aid-sun-1', '2026-10-04', '00:00', '07:00', 'Jordan (overnight)'),
- ('aid-sun-2', '2026-10-04', '07:00', '13:00', 'Heidi'),
- ('aid-sun-3', '2026-10-04', '13:00', '19:00', 'Ethan'),
- ('aid-sun-4', '2026-10-04', '19:00', '00:00', 'Jordan and Victor'),
- ('aid-mon-1', '2026-10-05', '00:00', '07:00', 'Bella (overnight)'),
- ('aid-mon-2', '2026-10-05', '07:00', '13:00', 'Victor'),
- ('aid-mon-3', '2026-10-05', '13:00', '19:00', 'Jordan');
