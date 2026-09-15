@@ -3,7 +3,6 @@
   "name": "teen-beach-moonta",
   "main": "src/index.js",
   "compatibility_date": "2026-05-01",
-  "compatibility_flags": ["nodejs_compat"],
 
   "assets": {
     "directory": "./public",
@@ -18,16 +17,14 @@
     }
   ],
 
-  // Plain settings. Anything secret (certificates, the staff PIN) goes in
-  // `wrangler secret put NAME` instead — never in this file.
+  // Plain settings. The staff PIN is a secret — set it with
+  // `wrangler secret put STAFF_PIN`, never in this file.
   "vars": {
     "EVENT_NAME": "Teen Beach Moonta",
     "EVENT_DATES": "2–5 October 2026",
     "EVENT_PLACE": "Moonta, SA",
     "EVENT_EMAIL": "branchmoot@sarovers.com.au",
     "EVENT_START_ISO": "2026-10-02T09:00:00+09:30",
-    "ORG_NAME": "Rover Scouts SA",
-    "PASS_TYPE_ID": "",
-    "TEAM_ID": ""
+    "ORG_NAME": "Rover Scouts SA"
   }
 }
