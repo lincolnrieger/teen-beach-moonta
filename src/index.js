@@ -1,5 +1,3 @@
-import { buildPass } from "./pass.js";
-
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
@@ -28,6 +26,13 @@ function newCode() {
   return s;
 }
 
+function newId(prefix) {
+  return prefix + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+}
+
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
 async function handleApi(request, env, url) {
   const path = url.pathname.replace(/^\/api\/?/, "");
   const method = request.method;
@@ -35,32 +40,9 @@ async function handleApi(request, env, url) {
   /* --- public: what this deployment can do --- */
   if (path === "config") {
     return json({
-      wallet: Boolean(env.SIGNER_CERT_PEM && env.SIGNER_KEY_PEM && env.WWDR_PEM && env.PASS_TYPE_ID && env.TEAM_ID),
       pinRequired: Boolean(env.STAFF_PIN),
       event: env.EVENT_NAME || "Teen Beach Moonta"
     });
-  }
-
-  /* --- public: a signed Apple Wallet pass --- */
-  if (path.startsWith("pass/")) {
-    const code = path.slice(5).replace(/\.pkpass$/i, "").toUpperCase();
-    const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code).first();
-    if (!member) return bad("No one on the list has that code.", 404);
-    if (!(env.SIGNER_CERT_PEM && env.SIGNER_KEY_PEM && env.WWDR_PEM && env.PASS_TYPE_ID && env.TEAM_ID)) {
-      return bad("Apple Wallet isn't set up on this deployment yet — see README step 5.", 503);
-    }
-    try {
-      const buffer = await buildPass(member, env);
-      return new Response(buffer, {
-        headers: {
-          "content-type": "application/vnd.apple.pkpass",
-          "content-disposition": `attachment; filename="teenbeach-${code}.pkpass"`,
-          "cache-control": "no-store"
-        }
-      });
-    } catch (err) {
-      return bad("The pass couldn't be signed: " + (err && err.message ? err.message : String(err)), 500);
-    }
   }
 
   /* --- everything below is staff only --- */
@@ -72,47 +54,55 @@ async function handleApi(request, env, url) {
   }
 
   if (path === "state") {
-    const [members, activities, movements, rev] = await Promise.all([
+    const [members, activities, aiders, movements, rev] = await Promise.all([
       env.DB.prepare("SELECT * FROM members ORDER BY name").all(),
       env.DB.prepare("SELECT * FROM activities ORDER BY date, start").all(),
+      env.DB.prepare("SELECT * FROM aiders ORDER BY date, start").all(),
       env.DB.prepare(
-        "SELECT m.t, m.dir, m.act, m.code, p.name FROM movements m LEFT JOIN members p ON p.code = m.code ORDER BY m.t DESC LIMIT 80"
+        "SELECT m.t, m.place, m.code, p.name FROM movements m LEFT JOIN members p ON p.code = m.code ORDER BY m.t DESC LIMIT 80"
       ).all(),
       env.DB.prepare("SELECT v FROM meta WHERE k = 'rev'").first()
     ]);
     return json({
       members: members.results,
       activities: activities.results.map((a) => ({ ...a, dest: !!a.dest })),
+      aiders: aiders.results,
       movements: movements.results,
       rev: rev ? rev.v : "0"
     });
   }
 
+  /* A scan just moves someone to the place the desk has selected: 'onsite',
+     'home', or an activity id. There is no in/out flag to get out of step. */
   if (path === "scan" && method === "POST") {
-    const { code, dir, act } = await request.json();
-    const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(String(code || "").toUpperCase()).first();
+    const { code, place } = await request.json();
+    const where = String(place || "").trim();
+    if (!where) return bad("no-destination");
+    const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?")
+      .bind(String(code || "").toUpperCase()).first();
     if (!member) return bad("unknown-code", 404);
-    if (dir === "out" && !act) return bad("no-destination");
-    if (dir === "in" && member.state !== "out") return bad("already-in");
+    if (where !== "onsite" && where !== "home") {
+      const act = await env.DB.prepare("SELECT id FROM activities WHERE id = ?").bind(where).first();
+      if (!act) return bad("unknown-place", 404);
+    }
+    if (member.place === where) return bad("already-there");
 
     const now = Date.now();
-    const prev = { state: member.state, act: member.act, since: member.since };
+    const prev = { place: member.place, since: member.since };
     await env.DB.batch([
-      env.DB.prepare("UPDATE members SET state = ?, act = ?, since = ? WHERE code = ?")
-        .bind(dir === "out" ? "out" : "in", dir === "out" ? act : null, now, member.code),
-      env.DB.prepare("INSERT INTO movements (code, dir, act, t) VALUES (?, ?, ?, ?)")
-        .bind(member.code, dir, dir === "out" ? act : member.act, now)
+      env.DB.prepare("UPDATE members SET place = ?, since = ? WHERE code = ?").bind(where, now, member.code),
+      env.DB.prepare("INSERT INTO movements (code, place, t) VALUES (?, ?, ?)").bind(member.code, where, now)
     ]);
     await bumpRev(env);
-    return json({ ok: true, member: { ...member, state: dir === "out" ? "out" : "in", act: dir === "out" ? act : null, since: now }, prev, at: now });
+    return json({ ok: true, member: { ...member, place: where, since: now }, prev, at: now });
   }
 
   if (path === "undo" && method === "POST") {
     const { code, prev } = await request.json();
     if (!code || !prev) return bad("nothing-to-undo");
     await env.DB.batch([
-      env.DB.prepare("UPDATE members SET state = ?, act = ?, since = ? WHERE code = ?")
-        .bind(prev.state, prev.act, prev.since, String(code).toUpperCase()),
+      env.DB.prepare("UPDATE members SET place = ?, since = ? WHERE code = ?")
+        .bind(prev.place, prev.since, String(code).toUpperCase()),
       env.DB.prepare("DELETE FROM movements WHERE id = (SELECT id FROM movements WHERE code = ? ORDER BY t DESC LIMIT 1)")
         .bind(String(code).toUpperCase())
     ]);
@@ -132,15 +122,14 @@ async function handleApi(request, env, url) {
         code: newCode(),
         name,
         crew: String(person.crew || "").trim(),
-        state: "in",
-        act: null,
+        place: "onsite",
         since: Date.now(),
         created: Date.now()
       };
       added.push(row);
       statements.push(
-        env.DB.prepare("INSERT INTO members (code, name, crew, state, act, since, created) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(row.code, row.name, row.crew, row.state, row.act, row.since, row.created)
+        env.DB.prepare("INSERT INTO members (code, name, crew, place, since, created) VALUES (?, ?, ?, ?, ?, ?)")
+          .bind(row.code, row.name, row.crew, row.place, row.since, row.created)
       );
     }
     if (!statements.length) return bad("No names given.");
@@ -162,16 +151,49 @@ async function handleApi(request, env, url) {
   if (path === "activities" && method === "POST") {
     const a = await request.json();
     if (!a.name) return bad("Give the activity a name.");
-    const id = "a" + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+    const id = newId("a");
     await env.DB.prepare(
-      "INSERT INTO activities (id, name, loc, date, start, end, kind, dest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(id, a.name, a.loc || "", a.date, a.start, a.end, a.kind || "main", a.dest ? 1 : 0).run();
+      "INSERT INTO activities (id, name, loc, date, start, end, kind, site, dest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(id, a.name, a.loc || "", a.date, a.start, a.end, a.kind || "main", a.site === "off" ? "off" : "on", a.dest ? 1 : 0).run();
     await bumpRev(env);
     return json({ ok: true, id });
   }
 
   if (path.startsWith("activities/") && method === "DELETE") {
-    await env.DB.prepare("DELETE FROM activities WHERE id = ?").bind(path.slice(11)).run();
+    const id = path.slice(11);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM activities WHERE id = ?").bind(id),
+      /* nobody can be left standing at an activity that no longer exists */
+      env.DB.prepare("UPDATE members SET place = 'onsite', since = ? WHERE place = ?").bind(Date.now(), id)
+    ]);
+    await bumpRev(env);
+    return json({ ok: true });
+  }
+
+  if (path === "aiders" && method === "POST") {
+    const a = await request.json();
+    const who = String(a.who || "").trim();
+    if (!who) return bad("Say who is on duty.");
+    if (!a.date) return bad("Pick a day.");
+    const id = newId("f");
+    await env.DB.prepare("INSERT INTO aiders (id, date, start, end, who) VALUES (?, ?, ?, ?, ?)")
+      .bind(id, a.date, a.start || "07:00", a.end || "19:00", who).run();
+    await bumpRev(env);
+    return json({ ok: true, id });
+  }
+
+  if (path.startsWith("aiders/") && method === "PATCH") {
+    const a = await request.json();
+    const who = String(a.who || "").trim();
+    if (!who) return bad("Say who is on duty.");
+    await env.DB.prepare("UPDATE aiders SET who = ?, start = ?, end = ? WHERE id = ?")
+      .bind(who, a.start || "07:00", a.end || "19:00", path.slice(7)).run();
+    await bumpRev(env);
+    return json({ ok: true });
+  }
+
+  if (path.startsWith("aiders/") && method === "DELETE") {
+    await env.DB.prepare("DELETE FROM aiders WHERE id = ?").bind(path.slice(7)).run();
     await bumpRev(env);
     return json({ ok: true });
   }
@@ -179,23 +201,22 @@ async function handleApi(request, env, url) {
   return bad("Unknown endpoint.", 404);
 }
 
-/* A plain page for one person: their code, QR and Wallet button. Send them
-   https://your-site/p/THEIRCODE and they can add the pass themselves. */
-async function personPage(code, env, origin) {
+/* A plain page for one person: their code as a QR code and a barcode. Send them
+   https://your-site/p/THEIRCODE and they can keep it on their phone. */
+async function personPage(code, env) {
   const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code.toUpperCase()).first();
   const event = env.EVENT_NAME || "Teen Beach Moonta";
   if (!member) {
     return new Response(
       `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">` +
-      `<title>${event}</title><body style="font-family:system-ui;padding:40px;text-align:center;color:#16333A">` +
+      `<title>${esc(event)}</title><body style="font-family:system-ui;padding:40px;text-align:center;color:#16333A">` +
       `<h1>That code isn't on the list</h1><p>Check with the camp registration desk.</p>`,
       { status: 404, headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
-  const walletReady = Boolean(env.SIGNER_CERT_PEM && env.SIGNER_KEY_PEM && env.WWDR_PEM && env.PASS_TYPE_ID && env.TEAM_ID);
   return new Response(
     `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>${member.name} — ${event}</title>
+<title>${esc(member.name)} — ${esc(event)}</title>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Archivo:wght@400;600;700&display=swap" rel=stylesheet>
 <style>
  body{margin:0;background:#fff;color:#16333A;font-family:Archivo,system-ui,sans-serif;text-align:center}
@@ -206,28 +227,37 @@ async function personPage(code, env, origin) {
  main{padding:26px 20px 50px;max-width:420px;margin:0 auto}
  .qr{width:230px;margin:0 auto}
  .qr svg{width:100%;height:auto;display:block}
- .code{font-family:ui-monospace,Menlo,monospace;font-size:22px;letter-spacing:.24em;font-weight:700;margin-top:14px}
- a.btn{display:block;margin-top:22px;background:#F5459B;color:#fff;text-decoration:none;font-weight:700;
-       padding:16px;border-radius:14px;font-size:17px}
+ .bc{margin:20px auto 0;max-width:300px}
+ .bc svg{width:100%;height:68px;display:block}
+ .code{font-family:ui-monospace,Menlo,monospace;font-size:22px;letter-spacing:.24em;font-weight:700;margin-top:10px}
  p.hint{color:#5F7A80;font-size:14px;margin-top:18px;line-height:1.5}
 </style>
-<div class=top><img src="/logo.png" alt=""><h1>${member.name}</h1><div class=crew>${member.crew || event}</div></div>
+<div class=top><img src="/logo.png" alt=""><h1>${esc(member.name)}</h1><div class=crew>${esc(member.crew || event)}</div></div>
 <main>
  <div class=qr id=qr></div>
- <div class=code>${member.code}</div>
- ${walletReady
-      ? `<a class=btn href="/api/pass/${member.code}.pkpass">Add to Apple Wallet</a>`
-      : `<p class=hint>Screenshot this page and the desk can scan it from your photos.</p>`}
- <p class=hint>Show this at the check in desk whenever you leave site and when you come back.</p>
+ <div class=bc id=bc></div>
+ <div class=code>${esc(member.code)}</div>
+ <p class=hint>Screenshot this page — the desk can scan either code from your photos.</p>
+ <p class=hint>Show it whenever you move between camp and an activity.</p>
 </main>
 <script src="/vendor/qrcode.js"></script>
+<script src="/vendor/JsBarcode.all.min.js"></script>
 <script>
- var q = qrcode(0, "M"); q.addData("${member.code}"); q.make();
+ var CODE = ${JSON.stringify(member.code)};
+ var q = qrcode(0, "M"); q.addData(CODE); q.make();
  var n = q.getModuleCount(), quiet = 2, total = n + quiet * 2, d = "";
  for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (c + quiet) + " " + (r + quiet) + "h1v1h-1z";
  document.getElementById("qr").innerHTML =
    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + total + ' ' + total + '" shape-rendering="crispEdges">' +
    '<rect width="' + total + '" height="' + total + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+ try {
+   var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+   JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 68, displayValue: false, margin: 0, background: "#ffffff" });
+   svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+   var bw = parseFloat(svg.getAttribute("width")), bh = parseFloat(svg.getAttribute("height"));
+   if (bw && bh) svg.setAttribute("viewBox", "0 0 " + bw + " " + bh);
+   document.getElementById("bc").appendChild(svg);
+ } catch (e) {}
 </script>`,
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }
   );
@@ -238,7 +268,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith("/api/")) return await handleApi(request, env, url);
-      if (url.pathname.startsWith("/p/")) return await personPage(url.pathname.slice(3), env, url.origin);
+      if (url.pathname.startsWith("/p/")) return await personPage(url.pathname.slice(3), env);
     } catch (err) {
       return bad("Server error: " + (err && err.message ? err.message : String(err)), 500);
     }

@@ -9,9 +9,6 @@
     "db:local": "wrangler d1 execute teenbeach --local --file=./schema.sql",
     "db:remote": "wrangler d1 execute teenbeach --remote --file=./schema.sql"
   },
-  "dependencies": {
-    "passkit-generator": "^3.5.7"
-  },
   "devDependencies": {
     "wrangler": "^4.0.0"
   }

@@ -1,5 +1,10 @@
-/* Teen Beach Moonta — camp check in board.
-   Talks to the Worker API in src/index.js. */
+/* Teen Beach Moonta — camp location board.
+   Talks to the Worker API in src/index.js.
+
+   One idea runs through the whole thing: everyone is somewhere. Either they're
+   on site, or they're at one of the programme's activities, or they've gone
+   home. A scan moves them to the place the desk has selected — there is no
+   separate sign out / sign in to fall out of step. */
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
@@ -13,25 +18,30 @@
   var DATES = "2–5 October 2026";
   var LOGO = "/logo.png";
 
-  /* First aid roster from the programme sheet — reference only, not stored. */
-  var AID = [
-    { date: "2026-10-05", start: "06:00", end: "07:00", who: "Bella" },
-    { date: "2026-10-05", start: "07:00", end: "13:00", who: "Victor" },
-    { date: "2026-10-05", start: "13:00", end: "19:00", who: "Jordan" }
-  ];
-  var STATIC_DESTS = [
-    { id: "town", name: "Moonta town", note: "Shops, chemist, supplies" },
-    { id: "beach", name: "Beach / foreshore", note: "Moonta Bay" },
-    { id: "other", name: "Somewhere else", note: "Anything not listed" }
+  /* A phone has no keyboard to type with, so nothing on the page may steal
+     focus into a text field — that is what pops the on-screen keyboard open
+     over the camera. On a laptop with a USB scanner, focus is exactly what we
+     want, so the two cases are kept apart here and nowhere else. */
+  var TOUCH = false;
+  try {
+    TOUCH = window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(pointer: fine)").matches;
+  } catch (e) {}
+
+  /* The two places that are always offered, whether or not anything is on the
+     programme. Everything else in the list is a real activity. */
+  var FIXED = [
+    { id: "onsite", name: "On site", note: "Here at camp" },
+    { id: "home", name: "Going home", note: "Leaving camp" }
   ];
 
   var members = new Map();
   var activities = new Map();
+  var aiders = [];
   var movements = [];
-  var config = { wallet: false, pinRequired: false };
+  var config = { pinRequired: false };
   var rev = null;
-  var ui = { view: "station", mode: "auto", dest: null, recent: [], day: null, card: null, showAll: false };
-  var lastScan = { code: null, at: 0 };
+  var ui = { view: "station", dest: null, recent: [], day: null, card: null, showAll: false };
+  var lastScan = { code: null, place: null, at: 0 };
   var undoable = null;
 
   /* ---------------- api ---------------- */
@@ -62,6 +72,7 @@
       state.members.forEach(function (m) { members.set(m.code, m); });
       activities.clear();
       state.activities.forEach(function (a) { activities.set(a.id, a); });
+      aiders = state.aiders || [];
       movements = state.movements || [];
       renderAll();
     } catch (e) { /* offline or locked — keep showing the last board */ }
@@ -94,25 +105,45 @@
     return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0);
   }
   function nowMins() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
-  function staticDest(id) {
-    for (var i = 0; i < STATIC_DESTS.length; i++) if (STATIC_DESTS[i].id === id) return STATIC_DESTS[i];
+  /* An end time at or before the start means it runs past midnight. */
+  function spanOn(row, nm) {
+    var s = mins(row.start), e = mins(row.end);
+    if (e <= s) e += 1440;
+    return (nm >= s && nm < e) || (nm + 1440 >= s && nm + 1440 < e);
+  }
+  function dayLabel(d) {
+    var t = new Date(d + "T12:00:00");
+    return isNaN(t.getTime()) ? d : t.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
+  }
+
+  function fixedPlace(id) {
+    for (var i = 0; i < FIXED.length; i++) if (FIXED[i].id === id) return FIXED[i];
     return null;
   }
-  function actLabel(id) {
-    if (!id) return "off site";
-    var s = staticDest(id);
-    if (s) return s.name;
+  function placeLabel(id) {
+    var f = fixedPlace(id);
+    if (f) return f.name;
     var a = activities.get(id);
-    return a ? a.name : "off site";
+    return a ? a.name : "on site";
   }
+  /* 'onsite' | 'off' | 'home' — where someone counts as being. */
+  function whereKind(id) {
+    if (id === "home") return "home";
+    var a = activities.get(id);
+    if (a) return a.site === "off" ? "off" : "onsite";
+    return "onsite";
+  }
+  function isOff(m) { return whereKind(m.place) === "off"; }
+  function isHome(m) { return m.place === "home"; }
+
   function endStamp(a) {
     if (!a || !a.date || !a.end) return null;
     var t = new Date(a.date + "T" + a.end + ":00");
     return isNaN(t.getTime()) ? null : t.getTime();
   }
   function isLate(m) {
-    if (m.state !== "out" || !m.act || staticDest(m.act)) return false;
-    var e = endStamp(activities.get(m.act));
+    if (!isOff(m)) return false;
+    var e = endStamp(activities.get(m.place));
     return !!e && Date.now() > e + 15 * 60000;
   }
   function sortedMembers() {
@@ -120,6 +151,9 @@
   }
   function sortedActivities() {
     return Array.from(activities.values()).sort(function (a, b) { return (a.date + a.start).localeCompare(b.date + b.start); });
+  }
+  function sortedAiders() {
+    return aiders.slice().sort(function (a, b) { return (a.date + a.start).localeCompare(b.date + b.start); });
   }
 
   /* ---------------- QR + barcode ---------------- */
@@ -171,6 +205,17 @@
       o.start(); o.stop(audio.currentTime + (ok ? 0.13 : 0.32));
     } catch (e) {}
   }
+
+  /* On a phone the box stays read-only until it is tapped on purpose, so the
+     keyboard only ever opens when someone asks for it. */
+  function focusScan() { if (!TOUCH) $("scan").focus(); }
+  function lockScan() {
+    if (!TOUCH) return;
+    var s = $("scan");
+    s.setAttribute("readonly", "readonly");
+    s.blur();
+  }
+
   var armedMap = new Map();
   function arm(btn, key, label, fn) {
     var p = armedMap.get(key);
@@ -192,38 +237,38 @@
     var code = String(raw || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (!code) return;
     var now = Date.now();
-    if (code === lastScan.code && now - lastScan.at < 2500) return;
-    lastScan = { code: code, at: now };
+    /* Bounce protection: a scanner that fires twice is ignored, but moving the
+       same person straight on to a different place is a real instruction. */
+    if (code === lastScan.code && ui.dest === lastScan.place && now - lastScan.at < 2500) return;
+    lastScan = { code: code, place: ui.dest, at: now };
 
     var local = members.get(code);
-    var dir = ui.mode === "auto" ? (local && local.state === "out" ? "in" : "out") : ui.mode;
-    if (dir === "out" && !ui.dest) {
+    if (!ui.dest) {
       beep(false);
-      showResult("bad", local ? local.name : code, "Pick where they're going first.", "");
+      showResult("bad", local ? local.name : code, "Pick where they are first.", "");
       return;
     }
     try {
-      var res = await api("scan", { method: "POST", body: { code: code, dir: dir, act: dir === "out" ? ui.dest : null } });
+      var res = await api("scan", { method: "POST", body: { code: code, place: ui.dest } });
       var m = res.member;
       members.set(m.code, m);
       undoable = { code: m.code, prev: res.prev };
       $("undoBtn").disabled = false;
       beep(true);
-      if (dir === "out") {
-        showResult("out", m.name, (res.prev.state === "out" ? "Moved to " : "Signed out to ") + actLabel(ui.dest),
-          clock(res.at) + (m.crew ? " · " + m.crew : ""));
-      } else {
-        showResult("in", m.name, "Back on site from " + actLabel(res.prev.act),
-          clock(res.at) + " · away " + since(res.prev.since || res.at));
-      }
-      ui.recent.unshift({ name: m.name, dir: dir, where: actLabel(dir === "out" ? ui.dest : res.prev.act), t: res.at });
+      var kind = whereKind(m.place);
+      var from = placeLabel(res.prev.place);
+      showResult(kind === "onsite" ? "in" : kind === "home" ? "home" : "out",
+        m.name,
+        m.place === "onsite" ? "On site" : m.place === "home" ? "Gone home" : "At " + placeLabel(m.place),
+        clock(res.at) + " · from " + from + (res.prev.since ? " after " + since(res.prev.since) : ""));
+      ui.recent.unshift({ name: m.name, where: placeLabel(m.place), kind: kind, t: res.at });
       ui.recent = ui.recent.slice(0, 8);
       renderRecent();
       refresh(true);
     } catch (err) {
       beep(false);
       if (err.code === "unknown-code") showResult("bad", "Code not recognised", "“" + code + "” isn't on the list.", "Add them under People & passes.");
-      else if (err.code === "already-in") showResult("bad", local ? local.name : code, "Already marked on site.", "Nothing changed.");
+      else if (err.code === "already-there") showResult("bad", local ? local.name : code, "Already at " + placeLabel(ui.dest) + ".", "Nothing changed.");
       else showResult("bad", "That didn't save", err.message || "Check the connection and try again.", "");
     }
   }
@@ -237,7 +282,7 @@
     } catch (e) { showResult("bad", "Couldn't undo", e.message || "", ""); }
     undoable = null;
     $("undoBtn").disabled = true;
-    lastScan = { code: null, at: 0 };
+    lastScan = { code: null, place: null, at: 0 };
     refresh(true);
   }
 
@@ -247,10 +292,11 @@
     $("camBtn").textContent = "Starting…";
     try { cam.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
     catch (e) {
-      $("camBtn").textContent = "Use the camera";
+      $("camBtn").textContent = "Scan with the camera";
       $("scanHint").textContent = "The camera couldn't start. Check the browser's camera permission, or use a scanner.";
       return;
     }
+    lockScan();
     var v = $("video");
     v.srcObject = cam.stream;
     await v.play().catch(function () {});
@@ -274,7 +320,7 @@
     if (cam.stream) cam.stream.getTracks().forEach(function (t) { t.stop(); });
     cam.stream = null;
     $("camWrap").hidden = true;
-    $("camBtn").textContent = "Use the camera";
+    $("camBtn").textContent = "Scan with the camera";
   }
 
   /* ---------------- render ---------------- */
@@ -284,89 +330,110 @@
   }
   function renderTally() {
     var all = Array.from(members.values());
-    var out = all.filter(function (m) { return m.state === "out"; });
-    var late = out.filter(isLate);
+    var off = all.filter(isOff), home = all.filter(isHome), late = off.filter(isLate);
     $("tally").innerHTML =
-      "<div><b>" + (all.length - out.length) + "</b><small>on site</small></div>" +
-      "<div><b>" + out.length + "</b><small>away</small></div>" +
+      "<div><b>" + (all.length - off.length - home.length) + "</b><small>on site</small></div>" +
+      "<div><b>" + off.length + "</b><small>off site</small></div>" +
+      (home.length ? "<div><b>" + home.length + "</b><small>gone home</small></div>" : "") +
       (late.length ? '<div class="hot"><b>' + late.length + "</b><small>due back</small></div>" : "");
   }
+
+  /* The desk list: the two fixed places on top, then the programme. With
+     nothing on the programme, the two fixed places are all there is. */
+  function destButton(id, name, note, cls) {
+    return '<button class="dest ' + cls + '" type="button" data-dest="' + esc(id) + '" aria-pressed="' +
+      (ui.dest === id) + '"><b>' + esc(name) + "</b><small>" + esc(note) + "</small></button>";
+  }
   function renderDests() {
-    var acts = sortedActivities().filter(function (a) { return ui.showAll || a.dest !== false; });
-    var today = todayISO();
-    $("dests").innerHTML = acts.map(function (a) {
-      var when = (a.date === today ? "today " : a.date.slice(8) + "/" + a.date.slice(5, 7) + " ") + a.start + "–" + a.end;
-      return '<button class="dest" type="button" data-dest="' + esc(a.id) + '" aria-pressed="' + (ui.dest === a.id) + '"><b>' +
-        esc(a.name) + "</b><small>" + esc(when + (a.loc ? " · " + a.loc : "")) + "</small></button>";
-    }).join("") + STATIC_DESTS.map(function (s) {
-      return '<button class="dest off" type="button" data-dest="' + s.id + '" aria-pressed="' + (ui.dest === s.id) + '"><b>' +
-        esc(s.name) + "</b><small>" + esc(s.note) + "</small></button>";
+    $("fixedDests").innerHTML = FIXED.map(function (f) {
+      return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here");
     }).join("");
+
+    var all = sortedActivities();
+    var today = todayISO();
+    var todays = all.filter(function (a) { return a.date === today; });
+    /* Outside the camp dates there is no "today" to narrow to, so show the lot. */
+    var pool = ui.showAll ? all : (todays.length ? todays : all);
+    var acts = ui.showAll ? pool : pool.filter(function (a) { return a.dest !== false; });
+
+    $("actDests").innerHTML = acts.map(function (a) {
+      var when = (a.date === today ? "today " : a.date.slice(8) + "/" + a.date.slice(5, 7) + " ") + a.start + "–" + a.end;
+      var note = when + (a.loc ? " · " + a.loc : "") + (a.site === "off" ? " · off site" : "");
+      return destButton(a.id, a.name, note, a.site === "off" ? "off" : "on");
+    }).join("");
+    $("actDestsEmpty").hidden = acts.length > 0;
+    $("actDestsHead").hidden = acts.length === 0;
+    $("showAllWrap").hidden = all.length === 0;
   }
   function renderRecent() {
     $("recent").innerHTML = ui.recent.length ? ui.recent.map(function (r) {
       return "<li><b>" + esc(r.name) + "</b> <span>" +
-        (r.dir === "out" ? "out to " + esc(r.where) : "back on site") + " · " + clock(r.t) + "</span></li>";
+        (r.kind === "home" ? "gone home" : r.kind === "off" ? "off site at " + esc(r.where) : "at " + esc(r.where)) +
+        " · " + clock(r.t) + "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">Scans show up here.</li>';
   }
   function personHtml(m) {
     var late = isLate(m);
     return '<div class="person' + (late ? " late" : "") + '"><b>' + esc(m.name) + "</b><small>" +
-      esc(m.crew || m.code) + " · " + (m.state === "out" ? "away " + since(m.since) : "here") +
-      (late ? " · due back" : "") + "</small></div>";
+      esc(m.crew || m.code) + " · " + since(m.since) + (late ? " · due back" : "") + "</small></div>";
   }
   function renderBoard() {
     var all = Array.from(members.values());
-    var out = all.filter(function (m) { return m.state === "out"; });
-    var late = out.filter(isLate);
+    var off = all.filter(isOff), home = all.filter(isHome), late = off.filter(isLate);
     $("boardStats").innerHTML =
-      '<div class="stat"><b>' + (all.length - out.length) + "</b><small>on site right now</small></div>" +
-      '<div class="stat pink"><b>' + out.length + "</b><small>away right now</small></div>" +
+      '<div class="stat"><b>' + (all.length - off.length - home.length) + "</b><small>on site right now</small></div>" +
+      '<div class="stat pink"><b>' + off.length + "</b><small>off site right now</small></div>" +
       '<div class="stat' + (late.length ? " warn" : "") + '"><b>' + late.length + "</b><small>past their return time</small></div>" +
-      '<div class="stat"><b>' + all.length + "</b><small>on the list</small></div>";
+      '<div class="stat"><b>' + home.length + "</b><small>gone home</small></div>";
+
     var q = ($("boardSearch").value || "").trim().toLowerCase();
     function match(m) { return !q || (m.name + " " + (m.crew || "") + " " + m.code).toLowerCase().indexOf(q) >= 0; }
+
+    /* One group per place someone is actually at, activities first. */
     var groups = new Map();
-    out.filter(match).forEach(function (m) {
-      var k = m.act || "other";
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(m);
+    all.filter(match).forEach(function (m) {
+      if (!groups.has(m.place)) groups.set(m.place, []);
+      groups.get(m.place).push(m);
     });
-    var html = Array.from(groups.entries())
-      .sort(function (a, b) { return actLabel(a[0]).localeCompare(actLabel(b[0])); })
-      .map(function (pair) {
-        var a = activities.get(pair[0]);
-        return '<div class="group"><div class="group-head"><h3>' + esc(actLabel(pair[0])) + "</h3><em>" +
-          pair[1].length + " away" + (a ? " · due back " + esc(a.end) : "") + '</em></div><div class="people">' +
-          pair[1].sort(function (x, y) { return x.name.localeCompare(y.name); }).map(personHtml).join("") + "</div></div>";
-      }).join("");
-    var here = all.filter(function (m) { return m.state !== "out"; }).filter(match)
-      .sort(function (x, y) { return x.name.localeCompare(y.name); });
-    html += '<div class="group"><div class="group-head"><h3>On site</h3><em>' + here.length + " here</em></div>" +
-      (here.length ? '<div class="people">' + here.map(personHtml).join("") + "</div>" : '<p class="muted">Nobody is marked on site.</p>') + "</div>";
+    function groupHtml(place, people) {
+      var a = activities.get(place);
+      var kindNote = place === "home" ? "gone home" : a ? (a.site === "off" ? "off site" : "on site") + " · " + a.start + "–" + a.end : "on site";
+      return '<div class="group' + (a && a.site === "off" ? " away" : "") + '"><div class="group-head"><h3>' +
+        esc(placeLabel(place)) + "</h3><em>" + people.length + " · " + esc(kindNote) + '</em></div><div class="people">' +
+        people.sort(function (x, y) { return x.name.localeCompare(y.name); }).map(personHtml).join("") + "</div></div>";
+    }
+    var order = Array.from(groups.keys()).sort(function (a, b) {
+      var rank = function (p) { return p === "onsite" ? 1 : p === "home" ? 2 : 0; };
+      return rank(a) - rank(b) || placeLabel(a).localeCompare(placeLabel(b));
+    });
+    var html = order.map(function (p) { return groupHtml(p, groups.get(p)); }).join("");
+    if (!groups.has("onsite")) {
+      html += '<div class="group"><div class="group-head"><h3>On site</h3><em>0 · on site</em></div>' +
+        '<p class="muted">Nobody is marked on site.</p></div>';
+    }
     $("boardGroups").innerHTML = all.length ? html :
       '<div class="empty">Nobody on the list yet. Add people under <b>People &amp; passes</b>.</div>';
   }
   function renderSchedule() {
     var acts = sortedActivities();
-    var days = Array.from(new Set(acts.map(function (a) { return a.date; })));
+    var days = Array.from(new Set(acts.map(function (a) { return a.date; })
+      .concat(aiders.map(function (a) { return a.date; }))));
     if (days.indexOf(todayISO()) < 0) days.push(todayISO());
     days.sort();
     if (!ui.day || days.indexOf(ui.day) < 0) ui.day = days.indexOf(todayISO()) >= 0 ? todayISO() : days[0];
     $("dayPick").innerHTML = days.map(function (d) {
-      var label = new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
-      return '<option value="' + d + '"' + (d === ui.day ? " selected" : "") + ">" + esc(label) + (d === todayISO() ? " — today" : "") + "</option>";
+      return '<option value="' + d + '"' + (d === ui.day ? " selected" : "") + ">" + esc(dayLabel(d)) + (d === todayISO() ? " — today" : "") + "</option>";
     }).join("");
 
     var isToday = ui.day === todayISO(), nm = nowMins();
-    $("aidbar").innerHTML = AID.filter(function (a) { return a.date === ui.day; }).map(function (a) {
-      var on = isToday && nm >= mins(a.start) && nm < mins(a.end);
-      return '<div class="aid"' + (on ? ' style="border-color:var(--pink)"' : "") + "><b>" + esc(a.who) + "</b> " +
-        esc(a.start) + "–" + esc(a.end) + (on ? " · on duty now" : "") + "</div>";
-    }).join("") || '<div class="muted">No first aid roster for this day.</div>';
+    $("aidbar").innerHTML = sortedAiders().filter(function (a) { return a.date === ui.day; }).map(function (a) {
+      var on = isToday && spanOn(a, nm);
+      return '<div class="aid' + (on ? " on" : "") + '"><b>' + esc(a.who) + "</b> " +
+        esc(a.start) + "–" + esc(a.end === "00:00" ? "midnight" : a.end) + (on ? " · on duty now" : "") + "</div>";
+    }).join("") || '<div class="muted">Nobody rostered for this day yet — add them below.</div>';
 
     var counts = new Map();
-    members.forEach(function (m) { if (m.state === "out" && m.act) counts.set(m.act, (counts.get(m.act) || 0) + 1); });
+    members.forEach(function (m) { counts.set(m.place, (counts.get(m.place) || 0) + 1); });
 
     var dayActs = acts.filter(function (a) { return a.date === ui.day; });
     $("agenda").innerHTML = dayActs.length ? dayActs.map(function (a) {
@@ -374,22 +441,38 @@
       var done = isToday && nm >= mins(a.end);
       var n = counts.get(a.id) || 0;
       var cls = "slot " + (a.kind === "meal" ? "meal " : a.kind === "cater" ? "cater " : "") + (now ? "now " : done ? "done " : "");
+      var sub = a.loc || (a.kind === "cater" ? "catering team" : "");
       return '<div class="' + cls.trim() + '"><div class="tm">' + esc(a.start) + "–" + esc(a.end) + "</div>" +
-        '<div class="nm">' + esc(a.name) + (a.loc || a.kind === "cater" ? "<small>" + esc(a.loc || "catering team") + "</small>" : "") + "</div>" +
-        '<div class="cnt">' + (n ? n + " away now" : now ? "on now" : "") + "</div></div>";
+        '<div class="nm">' + esc(a.name) + '<small><span class="site ' + (a.site === "off" ? "off" : "on") + '">' +
+        (a.site === "off" ? "off site" : "on site") + "</span>" + (sub ? " · " + esc(sub) : "") + "</small></div>" +
+        '<div class="cnt">' + (n ? n + " there" : now ? "on now" : "") + "</div></div>";
     }).join("") : '<div class="empty">Nothing on the programme for this day yet.</div>';
 
     $("feed").innerHTML = movements.length ? movements.map(function (e) {
-      return "<li><time>" + clock(e.t) + '</time><span class="pill' + (e.dir === "in" ? " in" : "") + '">' +
-        (e.dir === "in" ? "in" : "out") + "</span><span><b>" + esc(e.name || e.code) + "</b> " +
-        (e.dir === "in" ? "returned from " : "left for ") + esc(actLabel(e.act)) + "</span></li>";
+      var k = whereKind(e.place);
+      return "<li><time>" + clock(e.t) + '</time><span class="pill ' + k + '">' +
+        (k === "home" ? "home" : k === "off" ? "off" : "on") + "</span><span><b>" + esc(e.name || e.code) + "</b> " +
+        (e.place === "home" ? "went home" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
+        "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">No movements recorded yet.</li>';
 
+    $("aidTable").innerHTML = aiders.length
+      ? "<thead><tr><th>Day</th><th>From</th><th>Until</th><th>First aider</th><th></th></tr></thead><tbody>" +
+      sortedAiders().map(function (a) {
+        return "<tr><td>" + esc(dayLabel(a.date)) + '</td><td><input class="mini" type="time" data-aidstart="' + esc(a.id) +
+          '" value="' + esc(a.start) + '"></td><td><input class="mini" type="time" data-aidend="' + esc(a.id) +
+          '" value="' + esc(a.end) + '"></td><td><input type="text" data-aidwho="' + esc(a.id) + '" value="' + esc(a.who) +
+          '"></td><td class="actions"><button class="btn small" data-aidsave="' + esc(a.id) + '">Save</button> ' +
+          '<button class="btn small danger" data-aiddel="' + esc(a.id) + '">Remove</button></td></tr>';
+      }).join("") + "</tbody>"
+      : "<tbody><tr><td class='muted'>No first aiders rostered yet.</td></tr></tbody>";
+
     $("actTable").innerHTML = acts.length
-      ? "<thead><tr><th>Activity</th><th>When</th><th>Where</th><th>At the desk</th><th>Away</th><th></th></tr></thead><tbody>" +
+      ? "<thead><tr><th>Activity</th><th>When</th><th>Where</th><th>Site</th><th>At the desk</th><th>There</th><th></th></tr></thead><tbody>" +
       acts.map(function (a) {
         return "<tr><td><b>" + esc(a.name) + "</b></td><td>" + esc(a.date.slice(8) + "/" + a.date.slice(5, 7)) + " " +
           esc(a.start) + "–" + esc(a.end) + "</td><td>" + esc(a.loc || "—") + "</td><td>" +
+          '<span class="site ' + (a.site === "off" ? "off" : "on") + '">' + (a.site === "off" ? "off site" : "on site") + "</span></td><td>" +
           (a.dest ? '<span class="tag">shown</span>' : '<span class="muted">hidden</span>') +
           "</td><td>" + (counts.get(a.id) || 0) + '</td><td class="actions"><button class="btn small danger" data-delact="' +
           esc(a.id) + '">Remove</button></td></tr>';
@@ -402,18 +485,16 @@
       return !q || (m.name + " " + (m.crew || "") + " " + m.code).toLowerCase().indexOf(q) >= 0;
     });
     $("memTable").innerHTML = list.length
-      ? "<thead><tr><th>Name</th><th>Crew</th><th>Code</th><th>Status</th><th></th></tr></thead><tbody>" +
+      ? "<thead><tr><th>Name</th><th>Crew</th><th>Code</th><th>Where</th><th></th></tr></thead><tbody>" +
       list.map(function (m) {
+        var k = whereKind(m.place);
         return "<tr><td><b>" + esc(m.name) + "</b></td><td>" + esc(m.crew || "—") + '</td><td class="code">' + esc(m.code) +
-          "</td><td>" + (m.state === "out" ? '<span class="tag out">away</span>' : '<span class="tag">on site</span>') +
-          '</td><td class="actions"><button class="btn small" data-card="' + esc(m.code) + '">Card &amp; pass</button> ' +
+          '</td><td><span class="tag ' + k + '">' + esc(placeLabel(m.place)) + "</span>" +
+          '</td><td class="actions"><button class="btn small" data-card="' + esc(m.code) + '">Card</button> ' +
           '<button class="btn small danger" data-delmem="' + esc(m.code) + '">Remove</button></td></tr>';
       }).join("") + "</tbody>"
       : "<tbody><tr><td class='muted'>Nobody added yet.</td></tr></tbody>";
     $("siteBase").textContent = location.origin;
-    $("deployNote").textContent = config.wallet
-      ? "Apple Wallet is set up on this deployment — the Add to Apple Wallet button works."
-      : "Apple Wallet isn't set up yet. Add the four certificate secrets (README step 5) and the button turns on by itself.";
   }
 
   /* ---------------- cards ---------------- */
@@ -432,10 +513,6 @@
       '<div class="cd">' + esc(m.code) + "</div>" +
       '<div class="ev">' + EVENT + " · " + DATES + "</div></div>";
     $("cardStatus").textContent = "";
-    $("cardWallet").disabled = !config.wallet;
-    $("walletNote").textContent = config.wallet
-      ? "The pass opens straight into Apple Wallet on an iPhone."
-      : "Apple Wallet needs the signing certificates added to the Worker first — see README step 5.";
     $("modal").hidden = false;
   }
 
@@ -507,7 +584,7 @@
   function showGate(msg) {
     $("gate").hidden = false;
     $("gateStatus").textContent = msg || "";
-    $("pin").focus();
+    if (!TOUCH) $("pin").focus();
   }
   $("gateForm").addEventListener("submit", async function (e) {
     e.preventDefault();
@@ -518,7 +595,7 @@
       $("gate").hidden = true;
       $("pin").value = "";
       refresh(true);
-      $("scan").focus();
+      focusScan();
     } catch (err) { /* showGate already fired on 401 */ }
   });
 
@@ -528,34 +605,35 @@
       ui.view = t.dataset.view;
       document.querySelectorAll(".tab").forEach(function (x) { x.setAttribute("aria-selected", String(x === t)); });
       ["station", "board", "schedule", "members"].forEach(function (v) { $("view-" + v).hidden = v !== ui.view; });
-      if (ui.view !== "station") stopCamera(); else $("scan").focus();
+      if (ui.view !== "station") stopCamera(); else focusScan();
       renderAll();
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
   });
-  $("modes").addEventListener("click", function (e) {
-    var b = e.target.closest("[data-mode]");
-    if (!b) return;
-    ui.mode = b.dataset.mode;
-    document.querySelectorAll("[data-mode]").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
-    $("scan").focus();
-  });
   $("showAll").addEventListener("change", function () { ui.showAll = this.checked; renderDests(); });
-  $("dests").addEventListener("click", function (e) {
+  function pickDest(e) {
     var b = e.target.closest("[data-dest]");
     if (!b) return;
     ui.dest = b.dataset.dest === ui.dest ? null : b.dataset.dest;
     renderDests();
-    $("scan").focus();
-  });
+    focusScan();
+  }
+  $("fixedDests").addEventListener("click", pickDest);
+  $("actDests").addEventListener("click", pickDest);
+
   $("scan").addEventListener("keydown", function (e) {
     if (e.key !== "Enter") return;
     e.preventDefault();
     processScan($("scan").value);
     $("scan").value = "";
+    lockScan();
+  });
+  /* Tapping the box is the one way the keyboard opens on a phone. */
+  $("scan").addEventListener("click", function () {
+    if (this.hasAttribute("readonly")) { this.removeAttribute("readonly"); this.focus(); }
   });
   document.addEventListener("keydown", function (e) {
-    if (ui.view !== "station" || !$("modal").hidden || !$("gate").hidden) return;
+    if (TOUCH || ui.view !== "station" || !$("modal").hidden || !$("gate").hidden) return;
     var t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
     if (e.key.length === 1 && /[a-z0-9]/i.test(e.key)) $("scan").focus();
@@ -574,7 +652,7 @@
     }).slice(0, 12) : [];
     $("findResults").innerHTML = list.map(function (m) {
       return '<button class="person" type="button" data-pick="' + esc(m.code) + '"><b>' + esc(m.name) + "</b><small>" +
-        esc(m.crew || m.code) + " · " + (m.state === "out" ? "away" : "on site") + "</small></button>";
+        esc(m.crew || m.code) + " · " + esc(placeLabel(m.place)) + "</small></button>";
     }).join("") || (q ? '<p class="muted">No match.</p>' : "");
   });
   $("findResults").addEventListener("click", function (e) {
@@ -596,7 +674,8 @@
         method: "POST",
         body: {
           name: name, loc: $("actLoc").value.trim(), date: $("actDate").value || todayISO(),
-          start: $("actStart").value || "09:00", end: $("actEnd").value || "12:00", dest: $("actDest").checked
+          start: $("actStart").value || "09:00", end: $("actEnd").value || "12:00",
+          site: $("actSite").value, dest: $("actDest").checked
         }
       });
       $("actName").value = ""; $("actLoc").value = "";
@@ -607,13 +686,54 @@
   $("actTable").addEventListener("click", function (e) {
     var b = e.target.closest("[data-delact]");
     if (!b) return;
-    var id = b.dataset.delact, out = 0;
-    members.forEach(function (m) { if (m.state === "out" && m.act === id) out++; });
-    arm(b, "act:" + id, out ? out + " still away — remove?" : "Remove?", async function () {
+    var id = b.dataset.delact, there = 0;
+    members.forEach(function (m) { if (m.place === id) there++; });
+    arm(b, "act:" + id, there ? there + " still there — remove?" : "Remove?", async function () {
       if (ui.dest === id) ui.dest = null;
       await api("activities/" + id, { method: "DELETE" }).catch(function () {});
       refresh(true);
     });
+  });
+
+  /* ---- first aid roster ---- */
+  $("aidAdd").addEventListener("click", async function () {
+    var who = $("aidWho").value.trim();
+    if (!who) { $("aidStatus").textContent = "Say who is on duty."; return; }
+    try {
+      await api("aiders", {
+        method: "POST",
+        body: { date: $("aidDate").value || ui.day || todayISO(), start: $("aidStart").value || "07:00", end: $("aidEnd").value || "19:00", who: who }
+      });
+      $("aidWho").value = "";
+      $("aidStatus").textContent = "Added to the roster.";
+      refresh(true);
+    } catch (e) { $("aidStatus").textContent = e.message || "That didn't save."; }
+  });
+  $("aidTable").addEventListener("click", async function (e) {
+    var save = e.target.closest("[data-aidsave]");
+    if (save) {
+      var id = save.dataset.aidsave;
+      try {
+        await api("aiders/" + id, {
+          method: "PATCH",
+          body: {
+            who: $("aidTable").querySelector('[data-aidwho="' + id + '"]').value,
+            start: $("aidTable").querySelector('[data-aidstart="' + id + '"]').value,
+            end: $("aidTable").querySelector('[data-aidend="' + id + '"]').value
+          }
+        });
+        $("aidStatus").textContent = "Roster updated.";
+        refresh(true);
+      } catch (err) { $("aidStatus").textContent = err.message || "That didn't save."; }
+      return;
+    }
+    var del = e.target.closest("[data-aiddel]");
+    if (del) {
+      arm(del, "aid:" + del.dataset.aiddel, "Remove?", async function () {
+        await api("aiders/" + del.dataset.aiddel, { method: "DELETE" }).catch(function () {});
+        refresh(true);
+      });
+    }
   });
 
   async function addPeople(people, statusEl) {
@@ -660,9 +780,6 @@
   $("cardClose").addEventListener("click", function () { $("modal").hidden = true; });
   $("modal").addEventListener("click", function (e) { if (e.target === $("modal")) $("modal").hidden = true; });
   $("cardPng").addEventListener("click", function () { if (ui.card) cardPng(ui.card); });
-  $("cardWallet").addEventListener("click", function () {
-    if (ui.card) window.location.href = "/api/pass/" + ui.card + ".pkpass";
-  });
   $("cardLink").addEventListener("click", function () {
     if (!ui.card) return;
     var link = location.origin + "/p/" + ui.card;
@@ -677,12 +794,19 @@
 
   /* ---------------- boot ---------------- */
   (async function start() {
-    $("actDate").value = "2026-10-05";
+    $("actDate").value = "2026-10-03";
+    $("aidDate").value = "2026-10-03";
+    if (TOUCH) {
+      document.body.classList.add("touch");
+      $("scan").setAttribute("readonly", "readonly");
+      $("scan").placeholder = "Tap to type a code";
+      $("scanHint").textContent = "Scan with the camera, or tap the box above to type a code by hand.";
+    }
     try { config = await (await fetch("/api/config")).json(); } catch (e) {}
     if (config.pinRequired && !pin()) showGate();
     await refresh(true);
     if (!$("gate").hidden) return;
-    $("scan").focus();
+    focusScan();
   })();
 
   setInterval(function () { if (!document.hidden) refresh(false); }, 4000);
