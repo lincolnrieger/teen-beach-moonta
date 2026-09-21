@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teen Beach Moonta — who's where</title>
+<link rel="icon" href="/logo.png">
+<meta name="theme-color" content="#2BA8A0">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -34,7 +36,9 @@ h1,h2,h3,.fun{font-family:"Fredoka","Archivo",sans-serif;font-weight:600;letter-
 :focus-visible{outline:3px solid var(--teal);outline-offset:2px;border-radius:8px}
 
 /* ---- masthead ---- */
-.hero{background:var(--teal);color:#fff;padding:18px 0 0;position:relative}
+.hero{background:var(--teal);color:#fff;padding:calc(18px + env(safe-area-inset-top,0px)) 0 0;position:relative}
+.signout{background:rgba(255,255,255,.18);border-color:transparent;color:#fff;margin-left:10px;align-self:flex-start}
+.signout:hover{background:rgba(255,255,255,.3);border-color:transparent}
 .hero-in{max-width:1180px;margin:0 auto;padding:0 18px 6px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .badge{width:74px;height:74px;border-radius:50%;flex:0 0 auto;box-shadow:0 4px 14px rgba(0,0,0,.18)}
 .hero h1{margin:0;font-size:clamp(23px,4.2vw,32px);line-height:1.05;font-weight:700}
@@ -46,7 +50,7 @@ h1,h2,h3,.fun{font-family:"Fredoka","Archivo",sans-serif;font-weight:600;letter-
 .tally .hot{background:var(--coral)}
 .wave{display:block;width:100%;height:34px}
 
-.wrap{max-width:1180px;margin:0 auto;padding:0 18px 70px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 18px calc(70px + env(safe-area-inset-bottom,0px))}
 
 /* ---- tabs ---- */
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
@@ -114,6 +118,12 @@ textarea{min-height:100px;resize:vertical}
 .dest.home[aria-pressed="true"]{background:var(--ink);border-color:var(--ink)}
 #fixedDests .dest{border-width:3px}
 #fixedDests .dest b{font-size:17px}
+.destgroup{font-family:"Archivo",sans-serif;font-size:11.5px;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--dim);margin:18px 0 9px}
+#actDests > .destgroup:first-child{margin-top:14px}
+.dest .at{display:block;font-style:normal;font-size:11.5px;font-weight:800;color:var(--teal-dk);margin-top:5px}
+.dest[aria-pressed="true"] .at{color:rgba(255,255,255,.9)}
+#destFilter{font-size:15px}
 #scan{font-size:24px;font-weight:700;padding:18px;letter-spacing:.14em;text-transform:uppercase;text-align:center;border-color:var(--teal)}
 .ready{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--dim);margin-top:8px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
@@ -196,17 +206,23 @@ button.person:hover{border-color:var(--teal)}
 
 /* ---- modal + lanyard ---- */
 .modal{position:fixed;inset:0;background:rgba(16,50,56,.55);display:grid;place-items:center;padding:18px;z-index:40}
-.sheet{background:#fff;border-radius:20px;padding:22px;max-width:440px;width:100%;box-shadow:0 30px 60px rgba(0,0,0,.3);max-height:92vh;overflow:auto}
-.lanyard{background:#fff;color:#16333A;border:2px solid var(--line);border-radius:14px;padding:16px;display:flex;gap:14px;align-items:center}
-.lanyard .qr{width:118px;flex:0 0 118px}
-.lanyard .qr svg{width:100%;height:auto;display:block}
-.lanyard .side{min-width:0;flex:1 1 auto}
-.lanyard .nm{font-family:"Fredoka",sans-serif;font-size:21px;font-weight:600;line-height:1.15}
-.lanyard .cr{font-size:12.5px;color:var(--dim);margin-top:2px}
-.lanyard .bc{margin-top:9px}
-.lanyard .bc svg{max-width:100%;height:34px}
-.lanyard .cd{font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.2em;color:#4A5F63;margin-top:3px;font-weight:600}
-.lanyard .ev{font-size:11px;color:var(--teal-dk);font-weight:700;margin-top:7px}
+.sheet{background:#fff;border-radius:20px;padding:22px;max-width:520px;width:100%;box-shadow:0 30px 60px rgba(0,0,0,.3);max-height:92vh;overflow:auto}
+.lanyard{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cardface{position:relative;aspect-ratio:1240/1748;border-radius:8px;overflow:hidden;
+  box-shadow:0 4px 14px rgba(22,51,58,.16);background:#fff}
+.cardface .art{position:absolute;inset:0;width:100%;height:100%;display:block}
+.cardface .inner{position:absolute;display:flex;flex-direction:column;align-items:center;
+  justify-content:flex-start;text-align:center;gap:1.8%}
+.cardface .nm{font-family:"Fredoka",sans-serif;font-weight:600;font-size:8.2cqw;line-height:1.1;
+  width:100%;overflow-wrap:anywhere;color:#16333A}
+.cardface .cr{font-weight:600;font-size:4cqw;color:#5F7A80;line-height:1.2}
+.cardface .qr{width:44%;margin-top:2%}
+.cardface .qr svg{width:100%;height:auto;display:block}
+.cardface .bc{width:74%;margin-top:1.5%}
+.cardface .bc svg{width:100%;height:auto;display:block}
+.cardface .cd{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:6.2cqw;
+  letter-spacing:.16em;color:#16333A;line-height:1.1}
+.cardface.front{container-type:inline-size}
 .gate{position:fixed;inset:0;background:#2BA8A0;display:grid;place-items:center;padding:20px;z-index:60}
 .gatebox{background:#fff;border-radius:22px;padding:28px;max-width:340px;width:100%;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.25)}
 .gatebox img{border-radius:50%}
@@ -224,9 +240,10 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
     <img src="/logo.png" alt="" width="96" height="96">
     <h1>Teen Beach Moonta</h1>
     <p class="muted">Enter the staff PIN to open the check in board.</p>
-    <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="text-align:center;letter-spacing:.3em;font-size:20px">
-    <button class="btn primary" type="submit" style="width:100%;margin-top:12px">Open the board</button>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="PIN" style="text-align:center;letter-spacing:.3em;font-size:20px">
+    <button class="btn primary" type="submit" id="gateBtn" style="width:100%;margin-top:12px">Open the board</button>
     <p class="status" id="gateStatus"></p>
+    <p class="muted" style="font-size:12.5px;margin:10px 0 0">This device stays signed in for 12 hours.</p>
   </form>
 </div>
 
@@ -238,6 +255,7 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
       <p>Branchmoot 2026 · 2–5 October · who's on site, who's off site</p>
     </div>
     <div class="tally" id="tally"></div>
+    <button class="btn small signout" type="button" id="signOut" hidden>Sign out</button>
   </div>
   <svg class="wave" viewBox="0 0 1200 40" preserveAspectRatio="none" aria-hidden="true">
     <path d="M0 22 C 150 44 250 2 400 14 C 550 26 620 44 780 30 C 920 18 1050 0 1200 16 L1200 40 L0 40 Z" fill="#fff"/>
@@ -252,6 +270,7 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
     <button class="tab" role="tab" data-view="members" aria-selected="false">People &amp; cards</button>
   </nav>
 
+  <div class="banner bad" id="offline" hidden></div>
   <div class="banner" id="banner" hidden></div>
 
   <main>
@@ -262,9 +281,11 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
           <div class="card">
             <div class="step"><b>1</b><h2>Pick where they are going</h2></div>
             <div class="dests" id="fixedDests"></div>
-            <h3 id="actDestsHead" style="margin:18px 0 10px">Activities</h3>
-            <div class="dests" id="actDests"></div>
-            <p class="empty" id="actDestsEmpty" hidden>No activities on today. People are either on site or going home.</p>
+            <div id="destFilterWrap" hidden style="margin-top:18px">
+              <input id="destFilter" type="search" placeholder="Filter the programme…" autocomplete="off">
+            </div>
+            <div id="actDests"></div>
+            <p class="empty" id="actDestsEmpty" hidden>No activities on today. People are either on site or departing camp.</p>
             <div class="row" style="margin-top:12px" id="showAllWrap" hidden>
               <label class="muted fit" style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--dim);margin:0">
                 <input type="checkbox" id="showAll" style="width:18px;height:18px;flex:0 0 auto"> Show every day, plus catering and camp markers
@@ -368,11 +389,18 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
       </div>
 
       <div class="card">
-        <div class="row" style="align-items:center;margin-bottom:6px">
-          <h2 style="margin:0;flex:1 1 200px">Lanyard cards</h2>
-          <button class="btn teal fit" type="button" id="sheetBtn">Download the print sheet</button>
+        <h2 style="margin:0 0 4px">Cards</h2>
+        <p class="lead">Printed on the camp artwork — the name and both codes on the front, the Important Numbers page on the back. Print double sided and cut along the grid.</p>
+        <div class="row" style="align-items:flex-end;margin-bottom:14px">
+          <div style="flex:1 1 220px">
+            <label for="sheetSize">Size</label>
+            <select id="sheetSize">
+              <option value="lanyard">Lanyard card — 70 × 99 mm, 9 a sheet</option>
+              <option value="badge">A6 badge — 105 × 148 mm, 4 a sheet</option>
+            </select>
+          </div>
+          <div class="fit"><button class="btn teal" type="button" id="sheetBtn">Download the print sheet</button></div>
         </div>
-        <p class="lead">Cards print at 86 × 54 mm, two per row — the size of a standard lanyard pouch.</p>
         <input id="mSearch" type="search" placeholder="Search…" autocomplete="off" style="margin-bottom:14px">
         <p class="status" id="sheetStatus"></p>
         <div class="scroll"><table class="tbl" id="memTable"></table></div>
@@ -388,9 +416,10 @@ details p{font-size:13.5px;color:var(--dim);margin:8px 0 0}
 
 <div class="modal" id="modal" hidden>
   <div class="sheet">
+    <h3 style="margin:0 0 12px">Front and back</h3>
     <div class="lanyard" id="lanyard"></div>
-    <div class="row" style="margin-top:14px">
-      <button class="btn primary" type="button" id="cardPng">Save card as an image</button>
+    <div class="row" style="margin-top:16px">
+      <button class="btn primary" type="button" id="cardPng">Save the front as an image</button>
       <button class="btn fit" type="button" id="cardClose">Close</button>
     </div>
     <p class="status" id="cardStatus"></p>

@@ -19,12 +19,18 @@
 
   // Plain settings. The staff PIN is a secret — set it with
   // `wrangler secret put STAFF_PIN`, never in this file.
+  //
+  // EVENT_CONTACTS is the "who to ring" list on each person's own page. It is
+  // committed with the rest of this file, so if the repository is public these
+  // numbers are public too — move it to `wrangler secret put EVENT_CONTACTS`
+  // if that isn't what you want.
   "vars": {
     "EVENT_NAME": "Teen Beach Moonta",
     "EVENT_DATES": "2–5 October 2026",
     "EVENT_PLACE": "Moonta, SA",
     "EVENT_EMAIL": "branchmoot@sarovers.com.au",
     "EVENT_START_ISO": "2026-10-02T09:00:00+09:30",
-    "ORG_NAME": "Rover Scouts SA"
+    "ORG_NAME": "Rover Scouts SA",
+    "EVENT_CONTACTS": "[{\"role\":\"Camp lead · day or night\",\"name\":\"Ethan\",\"phone\":\"0434 997 161\"},{\"role\":\"Camp lead\",\"name\":\"Nikki\",\"phone\":\"0412 584 406\"}]"
   }
 }

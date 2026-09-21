@@ -16,7 +16,6 @@
   var SVGNS = "http://www.w3.org/2000/svg";
   var EVENT = "Teen Beach Moonta";
   var DATES = "2–5 October 2026";
-  var LOGO = "/logo.png";
 
   /* A phone has no keyboard to type with, so nothing on the page may steal
      focus into a text field — that is what pops the on-screen keyboard open
@@ -30,8 +29,8 @@
   /* The two places that are always offered, whether or not anything is on the
      programme. Everything else in the list is a real activity. */
   var FIXED = [
-    { id: "onsite", name: "On site", note: "Here at camp" },
-    { id: "home", name: "Going home", note: "Leaving camp" }
+    { id: "onsite", name: "On site", note: "Here at camp, not on an activity" },
+    { id: "home", name: "Departing camp", note: "Signing off and leaving site" }
   ];
 
   var members = new Map();
@@ -39,21 +38,26 @@
   var movements = [];
   var config = { pinRequired: false };
   var rev = null;
-  var ui = { view: "station", dest: null, recent: [], day: null, card: null, showAll: false };
+  var ui = { view: "station", dest: null, recent: [], day: null, card: null, showAll: false, filter: "" };
   var lastScan = { code: null, place: null, at: 0 };
   var undoable = null;
 
   /* ---------------- api ---------------- */
-  function pin() { try { return localStorage.getItem("tbm.pin") || ""; } catch (e) { return ""; } }
+  /* The desk holds a session token, not the PIN. It expires on its own, so a
+     borrowed laptop stops working without anyone having to change the PIN. */
+  function token() { try { return localStorage.getItem("tbm.session") || ""; } catch (e) { return ""; } }
+  function setToken(t) {
+    try { t ? localStorage.setItem("tbm.session", t) : localStorage.removeItem("tbm.session"); } catch (e) {}
+  }
   async function api(path, options) {
     options = options || {};
-    options.headers = Object.assign({ "x-pin": pin() }, options.headers || {});
+    options.headers = Object.assign({ "x-session": token() }, options.headers || {});
     if (options.body && typeof options.body !== "string") {
       options.body = JSON.stringify(options.body);
       options.headers["content-type"] = "application/json";
     }
     var res = await fetch("/api/" + path, options);
-    if (res.status === 401) { showGate("That PIN didn't work."); throw new Error("unauthorised"); }
+    if (res.status === 401) { setToken(""); showGate("Your session has ended — enter the PIN again."); throw new Error("unauthorised"); }
     var data = await res.json().catch(function () { return {}; });
     if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { code: data.error, status: res.status });
     return data;
@@ -63,7 +67,7 @@
     try {
       if (!force) {
         var r = await api("rev");
-        if (r.rev === rev) return;
+        if (r.rev === rev) { markOnline(true); return; }
       }
       var state = await api("state");
       rev = state.rev;
@@ -72,8 +76,22 @@
       activities.clear();
       state.activities.forEach(function (a) { activities.set(a.id, a); });
       movements = state.movements || [];
+      markOnline(true);
       renderAll();
-    } catch (e) { /* offline or locked — keep showing the last board */ }
+    } catch (e) {
+      /* Keep the last board on screen, but never let the desk believe a stale
+         count is live. */
+      if (e.message !== "unauthorised") markOnline(false);
+    }
+  }
+
+  var online = true, offlineSince = 0;
+  function markOnline(ok) {
+    if (ok === online) { if (ok) return; } else { online = ok; offlineSince = ok ? 0 : Date.now(); }
+    var el = $("offline");
+    el.hidden = ok;
+    if (!ok) var gap = Math.round((Date.now() - offlineSince) / 60000);
+    el.textContent = "Can't reach the server. " + (gap < 1 ? "The board below was live a moment ago" : "The board below is " + since(offlineSince) + " out of date") + " — scans won't save until the connection is back.";
   }
 
   function download(filename, data, type) {
@@ -248,7 +266,7 @@
       var from = placeLabel(res.prev.place);
       showResult(kind === "onsite" ? "in" : kind === "home" ? "home" : "out",
         m.name,
-        m.place === "onsite" ? "On site" : m.place === "home" ? "Gone home" : "At " + placeLabel(m.place),
+        m.place === "onsite" ? "On site" : m.place === "home" ? "Departing camp" : "At " + placeLabel(m.place),
         clock(res.at) + " · from " + from + (res.prev.since ? " after " + since(res.prev.since) : ""));
       ui.recent.unshift({ name: m.name, where: placeLabel(m.place), kind: kind, t: res.at });
       ui.recent = ui.recent.slice(0, 8);
@@ -323,41 +341,75 @@
     $("tally").innerHTML =
       "<div><b>" + (all.length - off.length - home.length) + "</b><small>on site</small></div>" +
       "<div><b>" + off.length + "</b><small>off site</small></div>" +
-      (home.length ? "<div><b>" + home.length + "</b><small>gone home</small></div>" : "") +
+      (home.length ? "<div><b>" + home.length + "</b><small>departing</small></div>" : "") +
       (late.length ? '<div class="hot"><b>' + late.length + "</b><small>due back</small></div>" : "");
   }
 
-  /* The desk list: the two fixed places on top, then the programme. With
-     nothing on the programme, the two fixed places are all there is. */
-  function destButton(id, name, note, cls) {
+  /* The desk list: the two fixed places on top, then the programme. Four days
+     of programme is far too many buttons to read at a scanning desk, so what is
+     happening now floats to the top, a filter box cuts the rest down, and
+     everything else stays one checkbox away. With nothing on the programme at
+     all, the two fixed places are the whole list. */
+  function destButton(id, name, note, cls, count) {
     return '<button class="dest ' + cls + '" type="button" data-dest="' + esc(id) + '" aria-pressed="' +
-      (ui.dest === id) + '"><b>' + esc(name) + "</b><small>" + esc(note) + "</small></button>";
+      (ui.dest === id) + '"><b>' + esc(name) + "</b><small>" + esc(note) + "</small>" +
+      (count ? '<i class="at">' + count + " there</i>" : "") + "</button>";
   }
   function renderDests() {
     $("fixedDests").innerHTML = FIXED.map(function (f) {
-      return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here");
+      var n = 0;
+      members.forEach(function (m) { if (m.place === f.id) n++; });
+      return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here", n);
     }).join("");
+
+    var counts = new Map();
+    members.forEach(function (m) { counts.set(m.place, (counts.get(m.place) || 0) + 1); });
 
     var all = sortedActivities();
     var today = todayISO();
     var todays = all.filter(function (a) { return a.date === today; });
     /* Outside the camp dates there is no "today" to narrow to, so show the lot. */
     var pool = ui.showAll ? all : (todays.length ? todays : all);
-    var acts = ui.showAll ? pool : pool.filter(function (a) { return a.dest !== false; });
+    if (!ui.showAll) pool = pool.filter(function (a) { return a.dest !== false; });
 
-    $("actDests").innerHTML = acts.map(function (a) {
-      var when = (a.date === today ? "today " : a.date.slice(8) + "/" + a.date.slice(5, 7) + " ") + a.start + "–" + a.end;
-      var note = when + (a.loc ? " · " + a.loc : "") + (a.site === "off" ? " · off site" : "");
-      return destButton(a.id, a.name, note, a.site === "off" ? "off" : "on");
+    var q = (ui.filter || "").trim().toLowerCase();
+    if (q) pool = pool.filter(function (a) {
+      return (a.name + " " + (a.loc || "")).toLowerCase().indexOf(q) >= 0;
+    });
+
+    var nm = nowMins();
+    function bucket(a) {
+      if (a.date !== today) return 2;
+      if (nm >= mins(a.start) && nm < mins(a.end)) return 0;
+      if (mins(a.start) > nm && mins(a.start) - nm <= 120) return 1;
+      return 2;
+    }
+    var groups = [
+      { title: "On now", items: [] },
+      { title: "Starting soon", items: [] },
+      { title: todays.length && !ui.showAll ? "Rest of today" : "Everything else", items: [] }
+    ];
+    pool.forEach(function (a) { groups[bucket(a)].items.push(a); });
+
+    $("actDests").innerHTML = groups.filter(function (g) { return g.items.length; }).map(function (g) {
+      return '<h4 class="destgroup">' + esc(g.title) + "</h4><div class=\"dests\">" + g.items.map(function (a) {
+        var when = (a.date === today ? "" : a.date.slice(8) + "/" + a.date.slice(5, 7) + " ") + a.start + "–" + a.end;
+        var note = when + (a.loc ? " · " + a.loc : "") + (a.site === "off" ? " · off site" : "");
+        return destButton(a.id, a.name, note, a.site === "off" ? "off" : "on", counts.get(a.id) || 0);
+      }).join("") + "</div>";
     }).join("");
-    $("actDestsEmpty").hidden = acts.length > 0;
-    $("actDestsHead").hidden = acts.length === 0;
+
+    $("actDestsEmpty").hidden = pool.length > 0;
+    $("actDestsEmpty").textContent = q
+      ? "Nothing on the programme matches “" + (ui.filter || "").trim() + "”."
+      : "No activities on today. People are either on site or departing camp.";
+    $("destFilterWrap").hidden = all.length < 8;
     $("showAllWrap").hidden = all.length === 0;
   }
   function renderRecent() {
     $("recent").innerHTML = ui.recent.length ? ui.recent.map(function (r) {
       return "<li><b>" + esc(r.name) + "</b> <span>" +
-        (r.kind === "home" ? "gone home" : r.kind === "off" ? "off site at " + esc(r.where) : "at " + esc(r.where)) +
+        (r.kind === "home" ? "departing camp" : r.kind === "off" ? "off site at " + esc(r.where) : "at " + esc(r.where)) +
         " · " + clock(r.t) + "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">Scans show up here.</li>';
   }
@@ -373,7 +425,7 @@
       '<div class="stat"><b>' + (all.length - off.length - home.length) + "</b><small>on site right now</small></div>" +
       '<div class="stat pink"><b>' + off.length + "</b><small>off site right now</small></div>" +
       '<div class="stat' + (late.length ? " warn" : "") + '"><b>' + late.length + "</b><small>past their return time</small></div>" +
-      '<div class="stat"><b>' + home.length + "</b><small>gone home</small></div>";
+      '<div class="stat"><b>' + home.length + "</b><small>departing camp</small></div>";
 
     var q = ($("boardSearch").value || "").trim().toLowerCase();
     function match(m) { return !q || (m.name + " " + (m.crew || "") + " " + m.code).toLowerCase().indexOf(q) >= 0; }
@@ -386,7 +438,7 @@
     });
     function groupHtml(place, people) {
       var a = activities.get(place);
-      var kindNote = place === "home" ? "gone home" : a ? (a.site === "off" ? "off site" : "on site") + " · " + a.start + "–" + a.end : "on site";
+      var kindNote = place === "home" ? "departing camp" : a ? (a.site === "off" ? "off site" : "on site") + " · " + a.start + "–" + a.end : "on site";
       return '<div class="group' + (a && a.site === "off" ? " away" : "") + '"><div class="group-head"><h3>' +
         esc(placeLabel(place)) + "</h3><em>" + people.length + " · " + esc(kindNote) + '</em></div><div class="people">' +
         people.sort(function (x, y) { return x.name.localeCompare(y.name); }).map(personHtml).join("") + "</div></div>";
@@ -435,7 +487,7 @@
       var k = whereKind(e.place);
       return "<li><time>" + clock(e.t) + '</time><span class="pill ' + k + '">' +
         (k === "home" ? "home" : k === "off" ? "off" : "on") + "</span><span><b>" + esc(e.name || e.code) + "</b> " +
-        (e.place === "home" ? "went home" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
+        (e.place === "home" ? "departed camp" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
         "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">No movements recorded yet.</li>';
 
@@ -470,86 +522,191 @@
   }
 
   /* ---------------- cards ---------------- */
-  var logoImg = new Image();
-  logoImg.src = LOGO;
-
+  /* A true preview of the printed card, laid out over the same artwork with the
+     same panel measurements the print sheet uses. */
   function openCard(code) {
     var m = members.get(code);
     if (!m) return;
     ui.card = code;
+    var pad = function (f) { return (f * 100).toFixed(2) + "%"; };
     $("lanyard").innerHTML =
-      '<div class="qr">' + qrSvg(m.code) + "</div>" +
-      '<div class="side"><div class="nm">' + esc(m.name) + "</div>" +
-      (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
-      '<div class="bc">' + barcodeSvg(m.code, 2, 34) + "</div>" +
-      '<div class="cd">' + esc(m.code) + "</div>" +
-      '<div class="ev">' + EVENT + " · " + DATES + "</div></div>";
+      '<div class="cardface front">' +
+        '<img class="art" src="/card-front.png" alt="">' +
+        '<div class="inner" style="left:' + pad(PANEL.left + 0.035) + ';right:' + pad(1 - PANEL.right + 0.035) +
+          ';top:' + pad(PANEL.top + 0.035) + ';bottom:' + pad(1 - PANEL_SAFE) + '">' +
+          '<div class="nm">' + esc(m.name) + "</div>" +
+          (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
+          '<div class="qr">' + qrSvg(m.code) + "</div>" +
+          '<div class="bc">' + barcodeSvg(m.code, 2, 30) + "</div>" +
+          '<div class="cd">' + esc(m.code) + "</div>" +
+        "</div></div>" +
+      '<div class="cardface"><img class="art" src="/card-back.png" alt="The Important Numbers page printed on the back"></div>';
     $("cardStatus").textContent = "";
     $("modal").hidden = false;
   }
 
+  /* The same card as the print sheet, as one image — for sending to someone who
+     has lost theirs, or for a phone screen at the desk. */
   async function cardPng(code) {
     var m = members.get(code);
     if (!m) return;
-    try { await document.fonts.load("600 64px Fredoka"); await document.fonts.load("500 30px Archivo"); } catch (e) {}
-    var W = 1016, H = 638, c = document.createElement("canvas");
-    c.width = W; c.height = H;
-    var ctx = c.getContext("2d");
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#2BA8A0"; ctx.fillRect(0, 0, W, 14);
-    qrOnCanvas(ctx, m.code, 44, 150, 360);
-    ctx.textBaseline = "top"; ctx.fillStyle = "#16333A";
-    ctx.font = "600 60px Fredoka, Archivo, sans-serif";
-    var name = m.name, maxW = W - 480;
-    while (ctx.measureText(name).width > maxW && name.length > 4) name = name.slice(0, -2);
-    if (name !== m.name) name = name.trim() + "…";
-    ctx.fillText(name, 452, 132);
-    ctx.font = "500 30px Archivo, sans-serif"; ctx.fillStyle = "#5F7A80";
-    if (m.crew) ctx.fillText(m.crew, 452, 212);
-    var bc = barcodeCanvas(m.code, 3, 104);
-    if (bc) ctx.drawImage(bc, 452, 300, Math.min(bc.width, 500), 104);
-    ctx.font = "600 27px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#4A5F63";
-    if ("letterSpacing" in ctx) ctx.letterSpacing = "6px";
-    ctx.fillText(m.code, 452, 426);
-    if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
-    ctx.font = "700 24px Archivo, sans-serif"; ctx.fillStyle = "#1B7F79";
-    ctx.fillText(EVENT + " · " + DATES, 452, 500);
-    if (logoImg.complete && logoImg.naturalWidth) ctx.drawImage(logoImg, W - 190, H - 190, 150, 150);
-    ctx.strokeStyle = "#DCE7E7"; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
-    c.toBlob(function (blob) {
-      if (!blob) { $("cardStatus").textContent = "The image couldn't be built."; return; }
-      var slug = m.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || m.code;
-      download(slug + "-" + m.code + ".png", blob);
-      $("cardStatus").textContent = "Saved to your downloads.";
-    }, "image/png");
+    $("cardStatus").textContent = "Building the image…";
+    try {
+      var src = await artwork("card-front.png");
+      var art = await new Promise(function (resolve, reject) {
+        var i = new Image();
+        i.onload = function () { resolve(i); };
+        i.onerror = function () { reject(new Error("The card artwork didn't load.")); };
+        i.src = src;
+      });
+      try { await document.fonts.load("600 64px Fredoka"); await document.fonts.load("600 30px Archivo"); } catch (e) {}
+
+      var W = art.naturalWidth, H = art.naturalHeight;
+      var c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      var ctx = c.getContext("2d");
+      ctx.drawImage(art, 0, 0, W, H);
+
+      var left = (PANEL.left + 0.035) * W, right = (PANEL.right - 0.035) * W;
+      var mid = (left + right) / 2, avail = right - left;
+      var y = (PANEL.top + 0.045) * H;
+
+      ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = "#16333A";
+      var nameSize = W * 0.082;
+      ctx.font = "600 " + nameSize + "px Fredoka, Archivo, sans-serif";
+      var name = m.name;
+      while (ctx.measureText(name).width > avail && nameSize > W * 0.05) {
+        nameSize -= 2;
+        ctx.font = "600 " + nameSize + "px Fredoka, Archivo, sans-serif";
+      }
+      ctx.fillText(name, mid, y);
+      y += nameSize * 1.2;
+
+      if (m.crew) {
+        ctx.font = "600 " + (W * 0.040) + "px Archivo, sans-serif";
+        ctx.fillStyle = "#5F7A80";
+        ctx.fillText(m.crew, mid, y);
+        y += W * 0.040 * 1.5;
+      }
+
+      var qrSize = W * 0.44;
+      qrOnCanvas(ctx, m.code, mid - qrSize / 2, y + W * 0.02, qrSize);
+      y += qrSize + W * 0.05;
+
+      var bc = barcodeCanvas(m.code, 3, 120);
+      if (bc) {
+        var bw = W * 0.74, bh = W * 0.145;
+        ctx.drawImage(bc, mid - bw / 2, y, bw, bh);
+        y += bh + W * 0.025;
+      }
+
+      ctx.font = "700 " + (W * 0.062) + "px ui-monospace, Menlo, monospace";
+      ctx.fillStyle = "#16333A";
+      if ("letterSpacing" in ctx) ctx.letterSpacing = (W * 0.016) + "px";
+      ctx.fillText(m.code, mid, y);
+      if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
+
+      await new Promise(function (resolve) {
+        c.toBlob(function (blob) {
+          if (!blob) { $("cardStatus").textContent = "The image couldn't be built."; return resolve(); }
+          var slug = m.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || m.code;
+          download(slug + "-" + m.code + ".png", blob);
+          $("cardStatus").textContent = "Saved to your downloads.";
+          resolve();
+        }, "image/png");
+      });
+    } catch (e) {
+      $("cardStatus").textContent = e.message || "The image couldn't be built.";
+    }
   }
 
-  function sheetHtml() {
-    var cards = sortedMembers().map(function (m) {
-      return '<div class="c"><div class="nm">' + esc(m.name) + "</div>" +
-        (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
-        '<div class="mid"><div class="qr">' + qrSvg(m.code) + "</div>" +
-        '<div class="rt"><div class="bc">' + barcodeSvg(m.code, 2, 30) + '</div><div class="cd">' + esc(m.code) +
-        '</div><div class="ev">' + EVENT + "</div></div></div></div>";
+  /* ---------------- print sheet ---------------- */
+  /* Cards print onto the camp artwork: the front is the blank frame with the
+     name and the two codes dropped into its white panel, the back is the
+     Important Numbers page. Both sizes tile an A4 sheet exactly, and because
+     every back is identical the sheet needs no mirroring — print it double
+     sided, flip on either edge, and every card lands on its own back. */
+  var SIZES = {
+    lanyard: { w: 70, h: 98.7, cols: 3, rows: 3, label: "lanyard card, 70 × 99 mm, 9 a sheet" },
+    badge:   { w: 105, h: 148, cols: 2, rows: 2, label: "A6 badge, 105 × 148 mm, 4 a sheet" }
+  };
+  /* The white panel measured off the artwork, as fractions of the whole card.
+     Below PANEL_SAFE the camp logo sits over the panel, so nothing goes there. */
+  var PANEL = { left: 0.100, right: 0.899, top: 0.071, bottom: 0.929 };
+  var PANEL_SAFE = 0.74;
+
+  var artCache = {};
+  async function artwork(name) {
+    if (artCache[name]) return artCache[name];
+    var res = await fetch("/" + name);
+    if (!res.ok) throw new Error("Couldn't load " + name);
+    var blob = await res.blob();
+    artCache[name] = await new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(fr.result); };
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+    return artCache[name];
+  }
+
+  async function sheetHtml(sizeKey) {
+    var S = SIZES[sizeKey] || SIZES.lanyard;
+    /* Inlined so the sheet still prints correctly from a laptop with no signal. */
+    var front = await artwork("card-front.png");
+    var back = await artwork("card-back.png");
+
+    var per = S.cols * S.rows;
+    var people = sortedMembers();
+    var pages = [];
+    for (var i = 0; i < people.length; i += per) pages.push(people.slice(i, i + per));
+
+    /* Sizes are set in mm off the card width so both options read the same. */
+    var u = function (f) { return (S.w * f).toFixed(2) + "mm"; };
+    var inner = "left:" + ((PANEL.left + 0.035) * 100).toFixed(2) + "%;" +
+                "right:" + ((1 - PANEL.right + 0.035) * 100).toFixed(2) + "%;" +
+                "top:" + ((PANEL.top + 0.035) * 100).toFixed(2) + "%;" +
+                "bottom:" + ((1 - PANEL_SAFE) * 100).toFixed(2) + "%;";
+
+    function cardFront(m) {
+      return '<div class=card><img class=art src="' + front + '" alt="">' +
+        '<div class=inner><div class=nm>' + esc(m.name) + "</div>" +
+        (m.crew ? '<div class=cr>' + esc(m.crew) + "</div>" : "") +
+        '<div class=qr>' + qrSvg(m.code) + "</div>" +
+        '<div class=bc>' + barcodeSvg(m.code, 2, 30) + "</div>" +
+        '<div class=cd>' + esc(m.code) + "</div></div></div>";
+    }
+    var backCard = '<div class=card><img class=art src="' + back + '" alt=""></div>';
+
+    var body = pages.map(function (page) {
+      return '<div class=page>' + page.map(cardFront).join("") + "</div>" +
+             '<div class=page>' + new Array(page.length + 1).join(backCard) + "</div>";
     }).join("");
-    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + EVENT + ' — lanyard cards</title><style>' +
-      "@page{size:A4;margin:9mm}" +
-      "body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#16333A;background:#fff}" +
-      ".grid{display:grid;grid-template-columns:repeat(2,88mm);gap:4mm;justify-content:center}" +
-      ".c{width:88mm;height:54mm;border:1px dashed #bbb;border-radius:3mm;padding:4mm;display:flex;flex-direction:column;" +
-      "box-sizing:border-box;page-break-inside:avoid;background-image:url(" + location.origin + "/logo.png);" +
-      "background-repeat:no-repeat;background-position:right 3mm top 3mm;background-size:14mm 14mm}" +
-      ".nm{font-size:15pt;font-weight:700;line-height:1.1;max-width:68mm}" +
-      ".cr{font-size:8.5pt;color:#5F7A80;margin-top:1mm}" +
-      ".mid{display:flex;gap:4mm;align-items:flex-end;margin-top:auto}" +
-      ".qr{width:25mm;flex:0 0 25mm}.qr svg{width:100%;height:auto;display:block}" +
-      ".rt{flex:1 1 auto;min-width:0}.bc svg{width:100%;height:11mm}" +
-      ".cd{font-family:monospace;font-size:10.5pt;letter-spacing:.2em;margin-top:1mm;color:#4A5F63;font-weight:bold}" +
-      ".ev{font-size:7.5pt;color:#1B7F79;font-weight:bold;margin-top:1mm}" +
+
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + esc(EVENT) +
+      ' — cards</title><style>' +
+      "@page{size:A4;margin:0}" +
+      "*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+      "body{margin:0;background:#fff;font-family:'Fredoka','Archivo',Arial,Helvetica,sans-serif;color:#16333A}" +
+      ".note{padding:8mm;font-size:11pt;line-height:1.5;font-family:Arial,Helvetica,sans-serif}" +
+      ".note b{font-size:13pt}" +
+      ".page{width:210mm;height:297mm;display:grid;grid-template-columns:repeat(" + S.cols + "," + S.w + "mm);" +
+        "grid-auto-rows:" + S.h + "mm;page-break-after:always;break-after:page;align-content:start}" +
+      ".card{position:relative;width:" + S.w + "mm;height:" + S.h + "mm;overflow:hidden;break-inside:avoid}" +
+      ".art{position:absolute;inset:0;width:100%;height:100%;display:block}" +
+      ".inner{position:absolute;" + inner + "display:flex;flex-direction:column;align-items:center;" +
+        "justify-content:flex-start;text-align:center;gap:" + u(0.018) + "}" +
+      ".nm{font-weight:600;font-size:" + u(0.082) + ";line-height:1.1;width:100%;overflow-wrap:anywhere}" +
+      ".cr{font-family:Archivo,Arial,sans-serif;font-weight:600;font-size:" + u(0.040) + ";color:#5F7A80;line-height:1.2}" +
+      ".qr{width:" + u(0.44) + ";margin-top:" + u(0.02) + "}.qr svg{width:100%;height:auto;display:block}" +
+      ".bc{width:" + u(0.74) + ";margin-top:" + u(0.015) + "}.bc svg{width:100%;height:" + u(0.145) + ";display:block}" +
+      ".cd{font-family:ui-monospace,'Courier New',monospace;font-weight:700;font-size:" + u(0.062) + ";" +
+        "letter-spacing:" + u(0.016) + ";color:#16333A;line-height:1.1}" +
       "@media print{.note{display:none}}" +
-      '</style></head><body><p class="note" style="font-size:10pt;color:#555">' + members.size +
-      " cards — print at 100% (turn off “fit to page”), then cut along the dashed lines.</p>" +
-      '<div class="grid">' + cards + "</div></body></html>";
+      '</style></head><body><div class="note"><b>' + people.length + " cards — " + esc(S.label) + ".</b><br>" +
+      "Print at 100% with <i>Fit to page</i> and <i>Margins</i> off, double sided, and turn on <i>Background graphics</i> " +
+      "if your printer dialog offers it. Every card's back is the same Important Numbers page, so it doesn't matter " +
+      "which edge it flips on. Then cut along the grid.</div>" + body + "</body></html>";
   }
 
   /* ---------------- gate ---------------- */
@@ -560,15 +717,39 @@
   }
   $("gateForm").addEventListener("submit", async function (e) {
     e.preventDefault();
-    try { localStorage.setItem("tbm.pin", $("pin").value.trim()); } catch (err) {}
+    var entered = $("pin").value.trim();
+    if (!entered) { $("gateStatus").textContent = "Enter the PIN."; return; }
     $("gateStatus").textContent = "Checking…";
+    $("gateBtn").disabled = true;
     try {
-      await api("rev");
+      var res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pin: entered })
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (res.status === 429) {
+        $("gateStatus").textContent = "Too many wrong tries. Wait " + Math.ceil((data.wait || 60) / 60) + " min and try again.";
+        return;
+      }
+      if (!res.ok || !data.token) { $("gateStatus").textContent = "That PIN didn't work."; return; }
+      setToken(data.token);
       $("gate").hidden = true;
       $("pin").value = "";
-      refresh(true);
+      $("gateStatus").textContent = "";
+      await refresh(true);
       focusScan();
-    } catch (err) { /* showGate already fired on 401 */ }
+    } catch (err) {
+      $("gateStatus").textContent = "Couldn't reach the server. Check the connection.";
+    } finally {
+      $("gateBtn").disabled = false;
+    }
+  });
+  $("signOut").addEventListener("click", function () {
+    arm(this, "signout", "Sign out of this device?", function () {
+      setToken("");
+      location.reload();
+    });
   });
 
   /* ---------------- wiring ---------------- */
@@ -583,6 +764,10 @@
     });
   });
   $("showAll").addEventListener("change", function () { ui.showAll = this.checked; renderDests(); });
+  $("destFilter").addEventListener("input", function () { ui.filter = this.value; renderDests(); });
+  $("destFilter").addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { this.value = ""; ui.filter = ""; renderDests(); }
+  });
   function pickDest(e) {
     var b = e.target.closest("[data-dest]");
     if (!b) return;
@@ -717,10 +902,19 @@
     if (navigator.clipboard) navigator.clipboard.writeText(link);
     $("cardStatus").textContent = link;
   });
-  $("sheetBtn").addEventListener("click", function () {
+  $("sheetBtn").addEventListener("click", async function () {
     if (!members.size) { $("sheetStatus").textContent = "Add some people first."; return; }
-    download("teen-beach-moonta-lanyard-cards.html", sheetHtml(), "text/html;charset=utf-8");
-    $("sheetStatus").textContent = "Saved — open it and print at 100%.";
+    var size = $("sheetSize").value;
+    this.disabled = true;
+    $("sheetStatus").textContent = "Building the sheet…";
+    try {
+      download("teen-beach-moonta-cards-" + size + ".html", await sheetHtml(size), "text/html;charset=utf-8");
+      $("sheetStatus").textContent = "Saved — open it and print double sided at 100%.";
+    } catch (e) {
+      $("sheetStatus").textContent = e.message || "The sheet couldn't be built.";
+    } finally {
+      this.disabled = false;
+    }
   });
 
   /* ---------------- boot ---------------- */
@@ -733,15 +927,27 @@
       $("scanHint").textContent = "Scan with the camera, or tap the box above to type a code by hand.";
     }
     try { config = await (await fetch("/api/config")).json(); } catch (e) {}
-    if (config.pinRequired && !pin()) showGate();
+    $("signOut").hidden = !config.pinRequired;
+    if (config.unprotected) {
+      $("banner").hidden = false;
+      $("banner").className = "banner bad";
+      $("banner").innerHTML = "<b>This board has no staff PIN.</b> Anyone with the link can see the roster and move people. " +
+        "Set one with <code>npx wrangler secret put STAFF_PIN</code>, then redeploy.";
+    }
+    if (config.pinRequired && !token()) { showGate(); return; }
     await refresh(true);
     if (!$("gate").hidden) return;
     focusScan();
   })();
 
-  setInterval(function () { if (!document.hidden) refresh(false); }, 4000);
+  /* Nothing polls while the PIN screen is up, or while the tab is in the
+     background — there is no token to poll with and nobody watching. */
+  function awake() { return !document.hidden && $("gate").hidden; }
+  setInterval(function () { if (awake()) refresh(false); }, 4000);
   setInterval(function () {
+    if (!awake()) return;
     renderTally();
+    if (ui.view === "station") renderDests();   /* "on now" moves with the clock */
     if (ui.view === "board") renderBoard();
     if (ui.view === "schedule") renderSchedule();
   }, 30000);

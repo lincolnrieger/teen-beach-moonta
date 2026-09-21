@@ -1,16 +1,9 @@
+import { login, staffOk, pinRequired, lockedOut } from "./auth.js";
+
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 const bad = (message, status = 400) => json({ error: message }, status);
-
-/* Staff routes need the shared PIN. Set it with:
-   npx wrangler secret put STAFF_PIN
-   If it is not set, the whole site is open — fine for a trial, not for the camp. */
-function staffOk(request, env) {
-  if (!env.STAFF_PIN) return true;
-  const sent = request.headers.get("x-pin") || "";
-  return sent === env.STAFF_PIN;
-}
 
 async function bumpRev(env) {
   await env.DB.prepare(
@@ -113,13 +106,42 @@ async function handleApi(request, env, url) {
   /* --- public: what this deployment can do --- */
   if (path === "config") {
     return json({
-      pinRequired: Boolean(env.STAFF_PIN),
+      pinRequired: pinRequired(env),
+      unprotected: !pinRequired(env),
       event: env.EVENT_NAME || "Teen Beach Moonta"
     });
   }
 
+  /* --- public: trade the PIN for a session token --- */
+  if (path === "login" && method === "POST") {
+    const wait = lockedOut(request);
+    if (wait) return json({ error: "locked-out", wait }, 429);
+    const { pin } = await request.json().catch(() => ({}));
+    const res = await login(request, env, String(pin || ""));
+    if (!res.ok) return bad(res.reason === "no-pin-set" ? "no-pin-set" : "wrong-pin", 401);
+    return json({ ok: true, token: res.token, expires: res.expires });
+  }
+
+  /* --- public: one person's own status, for their card page --- */
+  if (path.startsWith("me/")) {
+    await ensureSchema(env);
+    const code = path.slice(3).toUpperCase();
+    const member = await env.DB.prepare("SELECT code, name, crew, place, since FROM members WHERE code = ?")
+      .bind(code).first();
+    if (!member) return bad("unknown-code", 404);
+    const acts = await env.DB.prepare("SELECT id, name, loc, date, start, end, kind, site FROM activities ORDER BY date, start").all();
+    const here = acts.results.find((a) => a.id === member.place) || null;
+    return json({
+      member,
+      where: member.place === "home" ? { kind: "home", name: "Departing camp" }
+        : here ? { kind: here.site === "off" ? "off" : "onsite", name: here.name, loc: here.loc, end: here.end, date: here.date }
+        : { kind: "onsite", name: "On site" },
+      activities: acts.results
+    });
+  }
+
   /* --- everything below is staff only --- */
-  if (!staffOk(request, env)) return bad("Wrong PIN.", 401);
+  if (!(await staffOk(request, env))) return bad("Wrong PIN.", 401);
 
   await ensureSchema(env);
 
@@ -246,64 +268,199 @@ async function handleApi(request, env, url) {
   return bad("Unknown endpoint.", 404);
 }
 
-/* A plain page for one person: their code as a QR code and a barcode. Send them
-   https://your-site/p/THEIRCODE and they can keep it on their phone. */
+/* One person's own page. They get the link once and keep it on their phone:
+   their two codes to be scanned, where the desk currently has them, what is on
+   today, and the numbers to ring if something goes wrong. */
+function contactsOf(env) {
+  try {
+    const list = JSON.parse(env.EVENT_CONTACTS || "[]");
+    return Array.isArray(list) ? list.filter((c) => c && c.name && c.phone) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function personPage(code, env) {
   await ensureSchema(env);
   const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code.toUpperCase()).first();
   const event = env.EVENT_NAME || "Teen Beach Moonta";
   if (!member) {
     return new Response(
-      `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">` +
-      `<title>${esc(event)}</title><body style="font-family:system-ui;padding:40px;text-align:center;color:#16333A">` +
-      `<h1>That code isn't on the list</h1><p>Check with the camp registration desk.</p>`,
+      `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">` +
+      `<title>${esc(event)}</title>` +
+      `<body style="margin:0;font-family:system-ui,sans-serif;background:#2BA8A0;color:#fff;min-height:100vh;display:grid;place-items:center;padding:32px;text-align:center">` +
+      `<div><img src="/logo.png" width="96" height="96" style="border-radius:50%" alt="">` +
+      `<h1 style="font-size:24px;margin:20px 0 8px">That code isn't on the list</h1>` +
+      `<p style="opacity:.9;margin:0">Check with the camp registration desk.</p></div>`,
       { status: 404, headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
+
+  const contacts = contactsOf(env);
+  const contactRows = contacts.map((c) =>
+    `<a class=contact href="tel:${esc(String(c.phone).replace(/[^0-9+]/g, ""))}">` +
+    `<span class=cname><b>${esc(c.name)}</b>${c.role ? `<small>${esc(c.role)}</small>` : ""}</span>` +
+    `<span class=cnum>${esc(c.phone)}</span></a>`
+  ).join("");
+
   return new Response(
-    `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+    `<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name=theme-color content="#2BA8A0">
 <title>${esc(member.name)} — ${esc(event)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Archivo:wght@400;600;700&display=swap" rel=stylesheet>
+<link rel="icon" href="/logo.png">
+<link rel=preconnect href="https://fonts.googleapis.com">
+<link rel=preconnect href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Archivo:wght@400;600;700&display=swap" rel=stylesheet>
 <style>
- body{margin:0;background:#fff;color:#16333A;font-family:Archivo,system-ui,sans-serif;text-align:center}
- .top{background:#2BA8A0;color:#fff;padding:26px 20px 30px}
- .top img{width:92px;height:92px;border-radius:50%}
- h1{font-family:Fredoka,sans-serif;font-size:28px;margin:16px 0 4px}
- .crew{opacity:.9;font-size:15px}
- main{padding:26px 20px 50px;max-width:420px;margin:0 auto}
- .qr{width:230px;margin:0 auto}
- .qr svg{width:100%;height:auto;display:block}
- .bc{margin:20px auto 0;max-width:300px}
- .bc svg{width:100%;height:68px;display:block}
- .code{font-family:ui-monospace,Menlo,monospace;font-size:22px;letter-spacing:.24em;font-weight:700;margin-top:10px}
- p.hint{color:#5F7A80;font-size:14px;margin-top:18px;line-height:1.5}
+ :root{--teal:#2BA8A0;--teal-dk:#1B7F79;--teal-lt:#E3F5F3;--pink:#F5459B;--ink:#16333A;--dim:#5F7A80;
+       --line:#DCE7E7;--warn-bg:#FFF0D6;--warn:#A4650B;--ok-bg:#E2F5EC;--ok:#17845F;--coral:#FF6F61;
+       --pad-top:env(safe-area-inset-top,0px);--pad-bot:env(safe-area-inset-bottom,0px)}
+ *{box-sizing:border-box}
+ body{margin:0;background:#F4F9F9;color:var(--ink);font-family:Archivo,system-ui,sans-serif;line-height:1.5;
+      -webkit-font-smoothing:antialiased}
+ .top{background:var(--teal);color:#fff;padding:calc(24px + var(--pad-top)) 20px 34px;text-align:center;position:relative}
+ .top img{width:82px;height:82px;border-radius:50%;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+ .top h1{font-family:Fredoka,sans-serif;font-size:27px;margin:14px 0 2px;font-weight:600;line-height:1.15}
+ .top .crew{opacity:.92;font-size:15px}
+ .wave{display:block;width:100%;height:26px;margin-top:-1px}
+ main{max-width:460px;margin:0 auto;padding:0 16px calc(40px + var(--pad-bot))}
+ .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:20px;margin-top:-18px;
+       box-shadow:0 10px 28px rgba(22,51,58,.10);position:relative}
+ .card + .card{margin-top:16px}
+ h2{font-family:Fredoka,sans-serif;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--dim);margin:0 0 12px}
+ .status{display:flex;align-items:center;gap:14px}
+ .blob{width:52px;height:52px;border-radius:16px;flex:0 0 auto;display:grid;place-items:center;font-size:24px;
+       background:var(--ok-bg)}
+ .status.off .blob{background:var(--warn-bg)}
+ .status.home .blob{background:#EEF3F4}
+ .where{font-family:Fredoka,sans-serif;font-size:21px;font-weight:600;line-height:1.15}
+ .whensince{font-size:13.5px;color:var(--dim);margin-top:2px}
+ .codes{text-align:center}
+ .qr{width:215px;margin:0 auto;max-width:100%}
+ .qr svg{width:100%;height:auto;display:block;border-radius:6px}
+ .bc{margin:18px auto 0;max-width:290px}
+ .bc svg{width:100%;height:62px;display:block}
+ .code{font-family:ui-monospace,Menlo,monospace;font-size:21px;letter-spacing:.24em;font-weight:700;margin-top:8px}
+ .hint{color:var(--dim);font-size:13.5px;margin:14px 0 0}
+ ul.prog{list-style:none;margin:0;padding:0}
+ ul.prog li{display:flex;gap:12px;align-items:baseline;padding:10px 0;border-top:1px solid var(--line)}
+ ul.prog li:first-child{border-top:0}
+ ul.prog .t{font-size:13px;font-weight:700;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto;white-space:nowrap}
+ ul.prog .n{flex:1 1 auto;font-weight:600;font-size:15px}
+ ul.prog .n small{display:block;font-weight:500;font-size:12px;color:var(--dim)}
+ ul.prog li.now{background:var(--teal-lt);margin:0 -10px;padding:10px;border-radius:10px;border-top:0}
+ .tagnow{font-size:10.5px;font-weight:800;color:#fff;background:var(--teal);padding:2px 7px;border-radius:999px}
+ .tagoff{font-size:10.5px;font-weight:800;color:var(--warn);background:var(--warn-bg);padding:2px 7px;border-radius:999px}
+ a.contact{display:flex;align-items:center;justify-content:space-between;gap:12px;text-decoration:none;color:inherit;
+           padding:12px 0;border-top:1px solid var(--line)}
+ a.contact:first-of-type{border-top:0}
+ .cname b{display:block;font-size:16px}
+ .cname small{color:var(--dim);font-size:12.5px}
+ .cnum{font-weight:700;color:var(--teal-dk);white-space:nowrap;font-size:15.5px}
+ a.emergency{display:flex;align-items:center;justify-content:space-between;gap:12px;text-decoration:none;
+             background:var(--coral);color:#fff;border-radius:14px;padding:15px 18px;font-weight:700;font-size:17px;
+             margin-top:4px}
+ .foot{text-align:center;color:var(--dim);font-size:12.5px;margin-top:22px}
 </style>
-<div class=top><img src="/logo.png" alt=""><h1>${esc(member.name)}</h1><div class=crew>${esc(member.crew || event)}</div></div>
+<div class=top>
+ <img src="/logo.png" alt="">
+ <h1>${esc(member.name)}</h1>
+ <div class=crew>${esc(member.crew || event)}</div>
+</div>
+<svg class=wave viewBox="0 0 1200 40" preserveAspectRatio=none aria-hidden=true>
+ <path d="M0 22 C 150 44 250 2 400 14 C 550 26 620 44 780 30 C 920 18 1050 0 1200 16 L1200 0 L0 0 Z" fill="#2BA8A0"/>
+ <path d="M0 22 C 150 44 250 2 400 14 C 550 26 620 44 780 30 C 920 18 1050 0 1200 16 L1200 40 L0 40 Z" fill="#F4F9F9"/>
+</svg>
 <main>
- <div class=qr id=qr></div>
- <div class=bc id=bc></div>
- <div class=code>${esc(member.code)}</div>
- <p class=hint>Screenshot this page — the desk can scan either code from your photos.</p>
- <p class=hint>Show it whenever you move between camp and an activity.</p>
+ <div class=card>
+  <h2>Where the desk has you</h2>
+  <div class="status" id=status>
+   <div class=blob id=blob>📍</div>
+   <div><div class=where id=where>Checking…</div><div class=whensince id=whensince></div></div>
+  </div>
+ </div>
+
+ <div class="card codes">
+  <h2>Your codes</h2>
+  <div class=qr id=qr></div>
+  <div class=bc id=bc></div>
+  <div class=code>${esc(member.code)}</div>
+ </div>
+
+ <div class=card id=progCard hidden>
+  <h2>Today</h2>
+  <ul class=prog id=prog></ul>
+ </div>
+
+ ${contacts.length ? `<div class=card><h2>Who to ring</h2>${contactRows}</div>` : ""}
+
+ <a class=emergency href="tel:000"><span>Emergency</span><span>000</span></a>
+ <p class=foot>${esc(event)}</p>
 </main>
 <script src="/vendor/qrcode.js"></script>
 <script src="/vendor/JsBarcode.all.min.js"></script>
 <script>
- var CODE = ${JSON.stringify(member.code)};
- var q = qrcode(0, "M"); q.addData(CODE); q.make();
- var n = q.getModuleCount(), quiet = 2, total = n + quiet * 2, d = "";
- for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (c + quiet) + " " + (r + quiet) + "h1v1h-1z";
- document.getElementById("qr").innerHTML =
-   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + total + ' ' + total + '" shape-rendering="crispEdges">' +
-   '<rect width="' + total + '" height="' + total + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
- try {
-   var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-   JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 68, displayValue: false, margin: 0, background: "#ffffff" });
-   svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-   var bw = parseFloat(svg.getAttribute("width")), bh = parseFloat(svg.getAttribute("height"));
-   if (bw && bh) svg.setAttribute("viewBox", "0 0 " + bw + " " + bh);
-   document.getElementById("bc").appendChild(svg);
- } catch (e) {}
+(function () {
+  var CODE = ${JSON.stringify(member.code)};
+
+  var q = qrcode(0, "M"); q.addData(CODE); q.make();
+  var n = q.getModuleCount(), quiet = 2, total = n + quiet * 2, d = "";
+  for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (c + quiet) + " " + (r + quiet) + "h1v1h-1z";
+  document.getElementById("qr").innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + total + ' ' + total + '" shape-rendering="crispEdges">' +
+    '<rect width="' + total + '" height="' + total + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+  try {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 62, displayValue: false, margin: 0, background: "#ffffff" });
+    svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    var bw = parseFloat(svg.getAttribute("width")), bh = parseFloat(svg.getAttribute("height"));
+    if (bw && bh) svg.setAttribute("viewBox", "0 0 " + bw + " " + bh);
+    document.getElementById("bc").appendChild(svg);
+  } catch (e) {}
+
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function todayISO(){ var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
+  function mins(t){ var p = String(t||"").split(":"); return (parseInt(p[0],10)||0)*60 + (parseInt(p[1],10)||0); }
+  function ago(ms){ var m = Math.max(0, Math.round((Date.now()-ms)/60000));
+    return m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.floor(m/60) + "h " + String(m%60).padStart(2,"0") + "m ago"; }
+
+  var ICON = { onsite: "⛺", off: "🚌", home: "👋" };
+  async function tick() {
+    try {
+      var r = await fetch("/api/me/" + CODE, { cache: "no-store" });
+      if (!r.ok) return;
+      var d = await r.json();
+      var w = d.where, m = d.member;
+      document.getElementById("status").className = "status " + w.kind;
+      document.getElementById("blob").textContent = ICON[w.kind] || "📍";
+      document.getElementById("where").textContent =
+        w.kind === "home" ? "Departing camp" : w.kind === "off" ? "Off site — " + w.name : w.name === "On site" ? "On site" : "On site — " + w.name;
+      document.getElementById("whensince").textContent =
+        (m.since ? "Since " + ago(m.since) : "") + (w.end && w.kind === "off" ? " · back by " + w.end : "");
+
+      var today = todayISO(), nm = new Date().getHours()*60 + new Date().getMinutes();
+      var list = (d.activities || []).filter(function (a) {
+        return a.date === today && a.kind !== "cater" && mins(a.end) >= nm;
+      }).slice(0, 6);
+      var card = document.getElementById("progCard");
+      card.hidden = list.length === 0;
+      document.getElementById("prog").innerHTML = list.map(function (a) {
+        var on = nm >= mins(a.start) && nm < mins(a.end);
+        return '<li class="' + (on ? "now" : "") + '"><span class=t>' + esc(a.start) + "–" + esc(a.end) + "</span>" +
+          '<span class=n>' + esc(a.name) +
+          (a.loc ? "<small>" + esc(a.loc) + "</small>" : "") + "</span>" +
+          (on ? '<span class=tagnow>now</span>' : a.site === "off" ? '<span class=tagoff>off site</span>' : "") + "</li>";
+      }).join("");
+    } catch (e) { /* offline — leave the last state showing */ }
+  }
+  tick();
+  setInterval(function () { if (!document.hidden) tick(); }, 20000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) tick(); });
+})();
 </script>`,
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }
   );
