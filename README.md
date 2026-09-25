@@ -7,15 +7,18 @@ there's no separate sign out and sign in to fall out of step with each other.
 Runs on Cloudflare Workers with a D1 database and deploys from GitHub on every
 push.
 
-- **Move someone** — pick where they're going, scan a lanyard, done. **On site**
-  and **Going home** are always on offer; every activity on the programme sits
-  underneath them.
+- **Scan** — pick where they're going, scan a lanyard, done. **On site**,
+  **Going home** and whatever's on now or next are one tap away; everything else
+  on the programme is in the dropdown under them. The one box takes a scanner,
+  a typed code or a typed name.
 - **Who's where** — live counts and everyone grouped by the place they're at,
   with anyone past an off-site activity's return time flagged.
 - **Programme** — all four days are loaded from the Branch Moot schedule, each
-  activity marked on site or off site. Add your own in the app.
-- **People & cards** — everyone gets a six character code as a QR code *and* a
-  barcode. Printable card sheet, phone image, or their own web page.
+  activity marked on site or off site. Tap any activity to change or delete it,
+  or add your own.
+- **People** — everyone gets a six character code as a QR code *and* a barcode.
+  Printable card sheet (important numbers on the back), phone image, or their
+  own web page with the numbers to call.
 
 ---
 
@@ -97,8 +100,10 @@ not for the camp.
 
 ## 6. Run the camp
 
-1. **People & cards** → paste the roster (`Name, Crew` per line) → **Download the
-   print sheet** → print at 100% and cut. 88 × 54 mm, fits a standard lanyard pouch.
+1. **People** → **Paste a whole list** (`Name, Crew` per line) → **Download
+   lanyard cards** → print double sided (flip on the long edge) at 100% and cut.
+   88 × 54 mm, fits a standard lanyard pouch. Every card back carries the
+   important numbers — change them in `CONTACTS` at the top of `src/index.js`.
 
    ```
    Alex Moreno, Aurora Rover Unit
@@ -106,18 +111,19 @@ not for the camp.
    Priya Raman, Cove Rover Unit
    ```
 
-2. Send each person `https://your-site/p/THEIRCODE` (the **Copy their own page
-   link** button). Their page shows their QR code and their barcode, so it works
+2. Send each person `https://your-site/p/THEIRCODE` (**Card** → **Copy their
+   link**). Their page shows their QR code and their barcode, so it works
    with a camera or a laser scanner either way.
-3. At the desk: pick where they're going, scan, repeat. A $30 USB barcode scanner
+3. On the **Scan** tab: pick where they're going, scan, repeat. A $30 USB barcode scanner
    is the most reliable option — it just types the code and presses enter. The
    camera and the search-by-name fallback both work too.
 
 ### On a phone
 
 The board never grabs focus on a touch device, so the on-screen keyboard stays
-shut while you're scanning. **Scan with the camera** is the first button on the
-panel; the code box below it only opens the keyboard if you tap it on purpose.
+shut while you're scanning. **Camera** sits next to the scan box, and the box
+only opens the keyboard if you tap it on purpose. After each scan the result
+pops up at the bottom of the screen.
 
 ### On site and off site
 
@@ -146,6 +152,7 @@ npm run dev          # http://localhost:8787
 ```
 public/index.html   the board (markup + styles)
 public/app.js       all the front end logic
+public/numbers.webp the important numbers artwork used on the card backs
 public/vendor/      QR generator, QR scanner, barcode generator
 src/index.js        the Worker: API, person pages, static assets
 schema.sql          database tables and the four day programme
