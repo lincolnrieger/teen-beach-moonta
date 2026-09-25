@@ -3,7 +3,7 @@
 
    One idea runs through the whole thing: everyone is somewhere. Either they're
    on site, or they're at one of the programme's activities, or they've gone
-   home. A scan moves them to the place the desk has selected — there is no
+   home. A scan moves them to the place the board has selected — there is no
    separate sign out / sign in to fall out of step. */
 (function () {
   "use strict";
@@ -28,18 +28,21 @@
   } catch (e) {}
 
   /* The two places that are always offered, whether or not anything is on the
-     programme. Everything else in the list is a real activity. */
+     programme. Everything else is a real activity. */
   var FIXED = [
     { id: "onsite", name: "On site", note: "Here at camp" },
     { id: "home", name: "Going home", note: "Leaving camp" }
   ];
+  /* How many upcoming activities get their own button on the scan screen. The
+     rest are one tap away in the dropdown under them. */
+  var SUGGESTED = 5;
 
   var members = new Map();
   var activities = new Map();
   var movements = [];
-  var config = { pinRequired: false };
+  var config = { pinRequired: false, contacts: [] };
   var rev = null;
-  var ui = { view: "station", dest: null, recent: [], day: null, card: null, showAll: false };
+  var ui = { view: "station", dest: null, recent: [], day: null, card: null, act: null, mem: null };
   var lastScan = { code: null, place: null, at: 0 };
   var undoable = null;
 
@@ -72,6 +75,7 @@
       activities.clear();
       state.activities.forEach(function (a) { activities.set(a.id, a); });
       movements = state.movements || [];
+      if (ui.dest && !fixedPlace(ui.dest) && !activities.has(ui.dest)) ui.dest = null;
       renderAll();
     } catch (e) { /* offline or locked — keep showing the last board */ }
   }
@@ -98,14 +102,12 @@
     var m = Math.max(0, Math.round((Date.now() - ms) / 60000));
     return m < 60 ? m + " min" : Math.floor(m / 60) + "h " + String(m % 60).padStart(2, "0") + "m";
   }
-  function mins(hhmm) {
-    var p = String(hhmm || "").split(":");
-    return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0);
-  }
-  function nowMins() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
-  function dayLabel(d) {
+  function dayLabel(d, style) {
     var t = new Date(d + "T12:00:00");
-    return isNaN(t.getTime()) ? d : t.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
+    if (isNaN(t.getTime())) return d;
+    return style === "short"
+      ? t.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })
+      : t.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
   }
 
   function fixedPlace(id) {
@@ -116,7 +118,7 @@
     var f = fixedPlace(id);
     if (f) return f.name;
     var a = activities.get(id);
-    return a ? a.name : "on site";
+    return a ? a.name : "On site";
   }
   /* 'onsite' | 'off' | 'home' — where someone counts as being. */
   function whereKind(id) {
@@ -128,11 +130,12 @@
   function isOff(m) { return whereKind(m.place) === "off"; }
   function isHome(m) { return m.place === "home"; }
 
-  function endStamp(a) {
-    if (!a || !a.date || !a.end) return null;
-    var t = new Date(a.date + "T" + a.end + ":00");
+  function stamp(date, hhmm) {
+    if (!date || !hhmm) return null;
+    var t = new Date(date + "T" + hhmm + ":00");
     return isNaN(t.getTime()) ? null : t.getTime();
   }
+  function endStamp(a) { return a ? stamp(a.date, a.end) : null; }
   function isLate(m) {
     if (!isOff(m)) return false;
     var e = endStamp(activities.get(m.place));
@@ -143,6 +146,15 @@
   }
   function sortedActivities() {
     return Array.from(activities.values()).sort(function (a, b) { return (a.date + a.start).localeCompare(b.date + b.start); });
+  }
+  function whenLabel(a) {
+    var day = a.date === todayISO() ? "Today" : dayLabel(a.date, "short");
+    return day + " " + a.start + "–" + a.end;
+  }
+  function countAt(id) {
+    var n = 0;
+    members.forEach(function (m) { if (m.place === id) n++; });
+    return n;
   }
 
   /* ---------------- QR + barcode ---------------- */
@@ -205,13 +217,15 @@
     s.blur();
   }
 
+  /* Destructive buttons ask twice: the first tap relabels the button, the
+     second within a few seconds does it. */
   var armedMap = new Map();
   function arm(btn, key, label, fn) {
     var p = armedMap.get(key);
-    if (p) { clearTimeout(p); armedMap.delete(key); fn(); return; }
+    if (p) { clearTimeout(p.t); armedMap.delete(key); btn.textContent = p.original; fn(); return; }
     var original = btn.textContent;
     btn.textContent = label;
-    armedMap.set(key, setTimeout(function () { armedMap.delete(key); btn.textContent = original; }, 4500));
+    armedMap.set(key, { original: original, t: setTimeout(function () { armedMap.delete(key); btn.textContent = original; }, 4500) });
   }
   function showResult(kind, who, what, when) {
     var el = $("result");
@@ -220,6 +234,10 @@
     $("resWhat").textContent = what;
     $("resWhen").textContent = when || "";
     el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+  }
+  function setUndo(u) {
+    undoable = u;
+    $("undoBtn").hidden = !u;
   }
 
   async function processScan(raw) {
@@ -234,32 +252,59 @@
     var local = members.get(code);
     if (!ui.dest) {
       beep(false);
-      showResult("bad", local ? local.name : code, "Pick where they are first.", "");
+      showResult("bad", local ? local.name : code, "Pick where they're going first.", "");
       return;
     }
     try {
       var res = await api("scan", { method: "POST", body: { code: code, place: ui.dest } });
       var m = res.member;
       members.set(m.code, m);
-      undoable = { code: m.code, prev: res.prev };
-      $("undoBtn").disabled = false;
       beep(true);
       var kind = whereKind(m.place);
-      var from = placeLabel(res.prev.place);
       showResult(kind === "onsite" ? "in" : kind === "home" ? "home" : "out",
         m.name,
         m.place === "onsite" ? "On site" : m.place === "home" ? "Gone home" : "At " + placeLabel(m.place),
-        clock(res.at) + " · from " + from + (res.prev.since ? " after " + since(res.prev.since) : ""));
+        clock(res.at) + " · was " + placeLabel(res.prev.place) + (res.prev.since ? " for " + since(res.prev.since) : ""));
+      setUndo({ code: m.code, prev: res.prev });
       ui.recent.unshift({ name: m.name, where: placeLabel(m.place), kind: kind, t: res.at });
       ui.recent = ui.recent.slice(0, 8);
       renderRecent();
       refresh(true);
     } catch (err) {
       beep(false);
-      if (err.code === "unknown-code") showResult("bad", "Code not recognised", "“" + code + "” isn't on the list.", "Add them under People & passes.");
+      if (err.code === "unknown-code") showResult("bad", "Not recognised", "Nobody has the code “" + code + "”.", "Add them under People.");
       else if (err.code === "already-there") showResult("bad", local ? local.name : code, "Already at " + placeLabel(ui.dest) + ".", "Nothing changed.");
       else showResult("bad", "That didn't save", err.message || "Check the connection and try again.", "");
     }
+  }
+
+  /* The one box takes a scanner, a typed code or a typed name. */
+  function nameMatches(q) {
+    q = q.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return sortedMembers().filter(function (m) {
+      return (m.name + " " + (m.crew || "")).toLowerCase().indexOf(q) >= 0;
+    });
+  }
+  function renderFind(list) {
+    $("findResults").innerHTML = list.slice(0, 8).map(function (m) {
+      return '<button class="person" type="button" data-pick="' + esc(m.code) + '"><b>' + esc(m.name) + "</b><small>" +
+        esc(m.crew || m.code) + " · " + esc(placeLabel(m.place)) + "</small></button>";
+    }).join("");
+  }
+  function handleEntry(raw) {
+    var code = String(raw || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!code) return;
+    renderFind([]);
+    if (members.has(code)) return processScan(code);
+    var list = nameMatches(raw);
+    if (list.length === 1) return processScan(list[0].code);
+    if (list.length > 1) {
+      renderFind(list);
+      showResult("", list.length + " people match", "Tap the right one below.", "");
+      return;
+    }
+    processScan(code);
   }
 
   async function undoLast() {
@@ -269,8 +314,7 @@
       showResult("", "Undone", "The last scan has been rolled back.", "");
       ui.recent.shift(); renderRecent();
     } catch (e) { showResult("bad", "Couldn't undo", e.message || "", ""); }
-    undoable = null;
-    $("undoBtn").disabled = true;
+    setUndo(null);
     lastScan = { code: null, place: null, at: 0 };
     refresh(true);
   }
@@ -281,8 +325,8 @@
     $("camBtn").textContent = "Starting…";
     try { cam.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
     catch (e) {
-      $("camBtn").textContent = "Scan with the camera";
-      $("scanHint").textContent = "The camera couldn't start. Check the browser's camera permission, or use a scanner.";
+      $("camBtn").textContent = "Camera";
+      $("scanHint").textContent = "The camera couldn't start. Check the browser's camera permission.";
       return;
     }
     lockScan();
@@ -290,7 +334,7 @@
     v.srcObject = cam.stream;
     await v.play().catch(function () {});
     $("camWrap").hidden = false;
-    $("camBtn").textContent = "Stop the camera";
+    $("camBtn").textContent = "Stop";
     cam.canvas = cam.canvas || document.createElement("canvas");
     var ctx = cam.canvas.getContext("2d", { willReadFrequently: true });
     (function tick() {
@@ -309,7 +353,7 @@
     if (cam.stream) cam.stream.getTracks().forEach(function (t) { t.stop(); });
     cam.stream = null;
     $("camWrap").hidden = true;
-    $("camBtn").textContent = "Scan with the camera";
+    $("camBtn").textContent = "Camera";
   }
 
   /* ---------------- render ---------------- */
@@ -327,39 +371,49 @@
       (late.length ? '<div class="hot"><b>' + late.length + "</b><small>due back</small></div>" : "");
   }
 
-  /* The desk list: the two fixed places on top, then the programme. With
-     nothing on the programme, the two fixed places are all there is. */
+  /* The scan screen offers On site, Going home, and whatever is on now or up
+     next. Everything else on the programme is in the dropdown. */
   function destButton(id, name, note, cls) {
     return '<button class="dest ' + cls + '" type="button" data-dest="' + esc(id) + '" aria-pressed="' +
       (ui.dest === id) + '"><b>' + esc(name) + "</b><small>" + esc(note) + "</small></button>";
   }
   function renderDests() {
-    $("fixedDests").innerHTML = FIXED.map(function (f) {
-      return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here");
-    }).join("");
-
     var all = sortedActivities();
-    var today = todayISO();
-    var todays = all.filter(function (a) { return a.date === today; });
-    /* Outside the camp dates there is no "today" to narrow to, so show the lot. */
-    var pool = ui.showAll ? all : (todays.length ? todays : all);
-    var acts = ui.showAll ? pool : pool.filter(function (a) { return a.dest !== false; });
+    var now = Date.now();
+    var picks = all.filter(function (a) { return a.dest && (endStamp(a) || 0) > now; }).slice(0, SUGGESTED);
+    var chosen = activities.get(ui.dest);
+    if (chosen && picks.indexOf(chosen) < 0) picks.push(chosen);
 
-    $("actDests").innerHTML = acts.map(function (a) {
-      var when = (a.date === today ? "today " : a.date.slice(8) + "/" + a.date.slice(5, 7) + " ") + a.start + "–" + a.end;
-      var note = when + (a.loc ? " · " + a.loc : "") + (a.site === "off" ? " · off site" : "");
-      return destButton(a.id, a.name, note, a.site === "off" ? "off" : "on");
-    }).join("");
-    $("actDestsEmpty").hidden = acts.length > 0;
-    $("actDestsHead").hidden = acts.length === 0;
-    $("showAllWrap").hidden = all.length === 0;
+    $("dests").innerHTML =
+      FIXED.map(function (f) { return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here"); }).join("") +
+      picks.map(function (a) {
+        var running = (stamp(a.date, a.start) || 0) <= now && (endStamp(a) || 0) > now;
+        var note = (running ? "On now · until " + a.end : whenLabel(a)) + (a.site === "off" ? " · off site" : "");
+        return destButton(a.id, a.name, note, a.site === "off" ? "off" : "on");
+      }).join("");
+
+    var days = new Map();
+    all.forEach(function (a) {
+      if (!days.has(a.date)) days.set(a.date, []);
+      days.get(a.date).push(a);
+    });
+    var html = '<option value="">' + (all.length ? "Another activity…" : "Nothing on the programme yet") + "</option>";
+    days.forEach(function (list, d) {
+      html += '<optgroup label="' + esc(dayLabel(d)) + '">' + list.map(function (a) {
+        return '<option value="' + esc(a.id) + '">' + esc(a.start + "  " + a.name) + (a.site === "off" ? " (off site)" : "") + "</option>";
+      }).join("") + "</optgroup>";
+    });
+    /* Rebuilding an open dropdown would snap it shut under someone's finger. */
+    if (document.activeElement !== $("destMore")) {
+      $("destMore").innerHTML = html;
+      $("destMore").disabled = !all.length;
+    }
   }
   function renderRecent() {
     $("recent").innerHTML = ui.recent.length ? ui.recent.map(function (r) {
       return "<li><b>" + esc(r.name) + "</b> <span>" +
-        (r.kind === "home" ? "gone home" : r.kind === "off" ? "off site at " + esc(r.where) : "at " + esc(r.where)) +
-        " · " + clock(r.t) + "</span></li>";
-    }).join("") : '<li style="border:0;color:var(--dim)">Scans show up here.</li>';
+        (r.kind === "home" ? "gone home" : esc(r.where)) + " · " + clock(r.t) + "</span></li>";
+    }).join("") : '<li style="color:var(--dim)">Scans show up here.</li>';
   }
   function personHtml(m) {
     var late = isLate(m);
@@ -370,9 +424,9 @@
     var all = Array.from(members.values());
     var off = all.filter(isOff), home = all.filter(isHome), late = off.filter(isLate);
     $("boardStats").innerHTML =
-      '<div class="stat"><b>' + (all.length - off.length - home.length) + "</b><small>on site right now</small></div>" +
-      '<div class="stat pink"><b>' + off.length + "</b><small>off site right now</small></div>" +
-      '<div class="stat' + (late.length ? " warn" : "") + '"><b>' + late.length + "</b><small>past their return time</small></div>" +
+      '<div class="stat"><b>' + (all.length - off.length - home.length) + "</b><small>on site</small></div>" +
+      '<div class="stat pink"><b>' + off.length + "</b><small>off site</small></div>" +
+      '<div class="stat' + (late.length ? " warn" : "") + '"><b>' + late.length + "</b><small>past return time</small></div>" +
       '<div class="stat"><b>' + home.length + "</b><small>gone home</small></div>";
 
     var q = ($("boardSearch").value || "").trim().toLowerCase();
@@ -386,7 +440,7 @@
     });
     function groupHtml(place, people) {
       var a = activities.get(place);
-      var kindNote = place === "home" ? "gone home" : a ? (a.site === "off" ? "off site" : "on site") + " · " + a.start + "–" + a.end : "on site";
+      var kindNote = place === "home" ? "gone home" : a ? (a.site === "off" ? "off site" : "on site") + " · until " + a.end : "on site";
       return '<div class="group' + (a && a.site === "off" ? " away" : "") + '"><div class="group-head"><h3>' +
         esc(placeLabel(place)) + "</h3><em>" + people.length + " · " + esc(kindNote) + '</em></div><div class="people">' +
         people.sort(function (x, y) { return x.name.localeCompare(y.name); }).map(personHtml).join("") + "</div></div>";
@@ -396,40 +450,9 @@
       return rank(a) - rank(b) || placeLabel(a).localeCompare(placeLabel(b));
     });
     var html = order.map(function (p) { return groupHtml(p, groups.get(p)); }).join("");
-    if (!groups.has("onsite")) {
-      html += '<div class="group"><div class="group-head"><h3>On site</h3><em>0 · on site</em></div>' +
-        '<p class="muted">Nobody is marked on site.</p></div>';
-    }
-    $("boardGroups").innerHTML = all.length ? html :
-      '<div class="empty">Nobody on the list yet. Add people under <b>People &amp; passes</b>.</div>';
-  }
-  function renderSchedule() {
-    var acts = sortedActivities();
-    var days = Array.from(new Set(acts.map(function (a) { return a.date; })));
-    if (days.indexOf(todayISO()) < 0) days.push(todayISO());
-    days.sort();
-    if (!ui.day || days.indexOf(ui.day) < 0) ui.day = days.indexOf(todayISO()) >= 0 ? todayISO() : days[0];
-    $("dayPick").innerHTML = days.map(function (d) {
-      return '<option value="' + d + '"' + (d === ui.day ? " selected" : "") + ">" + esc(dayLabel(d)) + (d === todayISO() ? " — today" : "") + "</option>";
-    }).join("");
-
-    var isToday = ui.day === todayISO(), nm = nowMins();
-
-    var counts = new Map();
-    members.forEach(function (m) { counts.set(m.place, (counts.get(m.place) || 0) + 1); });
-
-    var dayActs = acts.filter(function (a) { return a.date === ui.day; });
-    $("agenda").innerHTML = dayActs.length ? dayActs.map(function (a) {
-      var now = isToday && nm >= mins(a.start) && nm < mins(a.end);
-      var done = isToday && nm >= mins(a.end);
-      var n = counts.get(a.id) || 0;
-      var cls = "slot " + (a.kind === "meal" ? "meal " : a.kind === "cater" ? "cater " : "") + (now ? "now " : done ? "done " : "");
-      var sub = a.loc || (a.kind === "cater" ? "catering team" : "");
-      return '<div class="' + cls.trim() + '"><div class="tm">' + esc(a.start) + "–" + esc(a.end) + "</div>" +
-        '<div class="nm">' + esc(a.name) + '<small><span class="site ' + (a.site === "off" ? "off" : "on") + '">' +
-        (a.site === "off" ? "off site" : "on site") + "</span>" + (sub ? " · " + esc(sub) : "") + "</small></div>" +
-        '<div class="cnt">' + (n ? n + " there" : now ? "on now" : "") + "</div></div>";
-    }).join("") : '<div class="empty">Nothing on the programme for this day yet.</div>';
+    $("boardGroups").innerHTML = !all.length
+      ? '<div class="empty">Nobody on the list yet. Add people under <b>People</b>.</div>'
+      : html || '<div class="empty">No match.</div>';
 
     $("feed").innerHTML = movements.length ? movements.map(function (e) {
       var k = whereKind(e.place);
@@ -438,40 +461,99 @@
         (e.place === "home" ? "went home" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
         "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">No movements recorded yet.</li>';
-
-    $("actTable").innerHTML = acts.length
-      ? "<thead><tr><th>Activity</th><th>When</th><th>Where</th><th>Site</th><th>At the desk</th><th>There</th><th></th></tr></thead><tbody>" +
-      acts.map(function (a) {
-        return "<tr><td><b>" + esc(a.name) + "</b></td><td>" + esc(a.date.slice(8) + "/" + a.date.slice(5, 7)) + " " +
-          esc(a.start) + "–" + esc(a.end) + "</td><td>" + esc(a.loc || "—") + "</td><td>" +
-          '<span class="site ' + (a.site === "off" ? "off" : "on") + '">' + (a.site === "off" ? "off site" : "on site") + "</span></td><td>" +
-          (a.dest ? '<span class="tag">shown</span>' : '<span class="muted">hidden</span>') +
-          "</td><td>" + (counts.get(a.id) || 0) + '</td><td class="actions"><button class="btn small danger" data-delact="' +
-          esc(a.id) + '">Remove</button></td></tr>';
-      }).join("") + "</tbody>"
-      : "<tbody><tr><td class='muted'>No activities yet.</td></tr></tbody>";
   }
+
+  function renderSchedule() {
+    var acts = sortedActivities();
+    var days = Array.from(new Set(acts.map(function (a) { return a.date; })));
+    var today = todayISO();
+    if (!days.length) days = [today];
+    if (!ui.day || days.indexOf(ui.day) < 0) ui.day = days.indexOf(today) >= 0 ? today : days[0];
+    $("days").innerHTML = days.map(function (d) {
+      return '<button class="day" type="button" data-day="' + d + '" aria-pressed="' + (d === ui.day) + '">' +
+        esc(d === today ? "Today" : dayLabel(d, "short")) + "</button>";
+    }).join("");
+
+    var now = Date.now();
+    var dayActs = acts.filter(function (a) { return a.date === ui.day; });
+    $("agenda").innerHTML = dayActs.length ? dayActs.map(function (a) {
+      var s = stamp(a.date, a.start) || 0, e = endStamp(a) || 0;
+      var running = s <= now && now < e, done = now >= e;
+      var n = countAt(a.id);
+      var cls = "slot" + (a.kind === "meal" ? " meal" : "") + (a.dest ? "" : " hid") + (running ? " now" : done ? " done" : "");
+      return '<button type="button" class="' + cls + '" data-act="' + esc(a.id) + '"><span class="tm">' + esc(a.start) + "–" + esc(a.end) + "</span>" +
+        '<span class="nm">' + esc(a.name) + '<small><span class="site ' + (a.site === "off" ? "off" : "on") + '">' +
+        (a.site === "off" ? "off site" : "on site") + "</span>" + (a.loc ? " · " + esc(a.loc) : "") + "</small></span>" +
+        '<span class="end"><span class="cnt">' + (n ? n + " there" : running ? "on now" : "") + '</span><span class="ed">Edit</span></span></button>';
+    }).join("") : '<div class="empty">Nothing on the programme for this day yet.</div>';
+  }
+
   function renderMembers() {
     var q = ($("mSearch").value || "").trim().toLowerCase();
     var list = sortedMembers().filter(function (m) {
       return !q || (m.name + " " + (m.crew || "") + " " + m.code).toLowerCase().indexOf(q) >= 0;
     });
-    $("memTable").innerHTML = list.length
-      ? "<thead><tr><th>Name</th><th>Crew</th><th>Code</th><th>Where</th><th></th></tr></thead><tbody>" +
-      list.map(function (m) {
-        var k = whereKind(m.place);
-        return "<tr><td><b>" + esc(m.name) + "</b></td><td>" + esc(m.crew || "—") + '</td><td class="code">' + esc(m.code) +
-          '</td><td><span class="tag ' + k + '">' + esc(placeLabel(m.place)) + "</span>" +
-          '</td><td class="actions"><button class="btn small" data-card="' + esc(m.code) + '">Card</button> ' +
-          '<button class="btn small danger" data-delmem="' + esc(m.code) + '">Remove</button></td></tr>';
-      }).join("") + "</tbody>"
-      : "<tbody><tr><td class='muted'>Nobody added yet.</td></tr></tbody>";
-    $("siteBase").textContent = location.origin;
+    $("mCount").textContent = members.size ? "(" + members.size + ")" : "";
+    $("memList").innerHTML = list.length ? list.map(function (m) {
+      var k = whereKind(m.place);
+      return '<div class="prow"><div class="who"><b>' + esc(m.name) + "</b><small>" + esc(m.crew || "No crew") + "</small></div>" +
+        '<span class="tag ' + k + '">' + esc(placeLabel(m.place)) + "</span>" +
+        '<span class="code">' + esc(m.code) + "</span>" +
+        '<div class="acts"><button class="btn small" data-card="' + esc(m.code) + '">Card</button>' +
+        '<button class="btn small" data-editmem="' + esc(m.code) + '">Edit</button></div></div>';
+    }).join("") : '<div class="empty">' + (members.size ? "No match." : "Nobody added yet.") + "</div>";
+  }
+
+  /* ---------------- modals ---------------- */
+  function openModal(id) { $(id).hidden = false; }
+  function closeModals() {
+    document.querySelectorAll(".modal").forEach(function (m) { m.hidden = true; });
+    ui.card = ui.act = ui.mem = null;
+  }
+  document.querySelectorAll(".modal").forEach(function (m) {
+    m.addEventListener("click", function (e) {
+      if (e.target === m || e.target.closest("[data-close]")) closeModals();
+    });
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeModals(); });
+
+  function openAct(id) {
+    var a = id ? activities.get(id) : null;
+    ui.act = a ? a.id : null;
+    $("actTitle").textContent = a ? "Edit activity" : "Add activity";
+    $("actName").value = a ? a.name : "";
+    $("actLoc").value = a ? a.loc || "" : "";
+    $("actDate").value = a ? a.date : (ui.day || todayISO());
+    $("actStart").value = a ? a.start : "09:00";
+    $("actEnd").value = a ? a.end : "10:00";
+    $("actSite").value = a && a.site === "off" ? "off" : "on";
+    $("actDest").checked = a ? !!a.dest : true;
+    $("actDel").hidden = !a;
+    $("actDel").textContent = "Delete";
+    $("actStatus").textContent = "";
+    openModal("actModal");
+    if (!TOUCH) $("actName").focus();
+  }
+
+  function openMem(code) {
+    var m = members.get(code);
+    if (!m) return;
+    ui.mem = code;
+    $("eName").value = m.name;
+    $("eCrew").value = m.crew || "";
+    $("memDel").textContent = "Remove";
+    $("memStatus").textContent = "";
+    openModal("memModal");
   }
 
   /* ---------------- cards ---------------- */
   var logoImg = new Image();
   logoImg.src = LOGO;
+
+  function firstAid() {
+    var c = (config.contacts || []).filter(function (x) { return x.group === "First aid"; })[0];
+    return c ? c.tel : "";
+  }
 
   function openCard(code) {
     var m = members.get(code);
@@ -483,9 +565,9 @@
       (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
       '<div class="bc">' + barcodeSvg(m.code, 2, 34) + "</div>" +
       '<div class="cd">' + esc(m.code) + "</div>" +
-      '<div class="ev">' + EVENT + " · " + DATES + "</div></div>";
+      '<div class="ev">' + (firstAid() ? "First aid " + esc(firstAid()) : EVENT + " · " + DATES) + "</div></div>";
     $("cardStatus").textContent = "";
-    $("modal").hidden = false;
+    openModal("modal");
   }
 
   async function cardPng(code) {
@@ -513,7 +595,8 @@
     ctx.fillText(m.code, 452, 426);
     if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
     ctx.font = "700 24px Archivo, sans-serif"; ctx.fillStyle = "#1B7F79";
-    ctx.fillText(EVENT + " · " + DATES, 452, 500);
+    ctx.fillText(EVENT + " · " + DATES, 452, 492);
+    if (firstAid()) { ctx.fillStyle = "#E4574B"; ctx.fillText("First aid " + firstAid(), 452, 530); }
     if (logoImg.complete && logoImg.naturalWidth) ctx.drawImage(logoImg, W - 190, H - 190, 150, 150);
     ctx.strokeStyle = "#DCE7E7"; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
     c.toBlob(function (blob) {
@@ -524,32 +607,71 @@
     }, "image/png");
   }
 
+  /* The back of every card: the important numbers over the camp artwork. */
+  function backHtml() {
+    var groups = [], by = {};
+    (config.contacts || []).forEach(function (c) {
+      if (!by[c.group]) { by[c.group] = { name: c.group, urgent: c.urgent, lines: [] }; groups.push(by[c.group]); }
+      by[c.group].lines.push((c.name ? "<b>" + esc(c.name) + "</b> " : "") + esc(c.tel) + (c.alt ? " or " + esc(c.alt) : "") +
+        (c.note ? " <i>" + esc(c.note.toLowerCase()) + "</i>" : ""));
+    });
+    return '<div class="c back"><div class="panel"><div class="tt">Important numbers</div><div class="cols">' +
+      groups.map(function (g) {
+        return '<div class="g' + (g.urgent ? " urgent" : "") + '"><div class="gh">' + esc(g.name) + "</div>" +
+          g.lines.map(function (l) { return "<div>" + l + "</div>"; }).join("") + "</div>";
+      }).join("") + "</div></div></div>";
+  }
+
+  /* Cards come eight to an A4 page. Each page of fronts is followed by a page
+     of backs, so it prints double sided (flip on the long edge). Every back is
+     the same, so they line up whichever way the printer turns the sheet. */
   function sheetHtml() {
-    var cards = sortedMembers().map(function (m) {
-      return '<div class="c"><div class="nm">' + esc(m.name) + "</div>" +
-        (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
-        '<div class="mid"><div class="qr">' + qrSvg(m.code) + "</div>" +
-        '<div class="rt"><div class="bc">' + barcodeSvg(m.code, 2, 30) + '</div><div class="cd">' + esc(m.code) +
-        '</div><div class="ev">' + EVENT + "</div></div></div></div>";
-    }).join("");
-    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + EVENT + ' — lanyard cards</title><style>' +
-      "@page{size:A4;margin:9mm}" +
+    var PER = 8;
+    var list = sortedMembers();
+    var back = (config.contacts || []).length ? backHtml() : "";
+    var pages = "";
+    for (var i = 0; i < list.length; i += PER) {
+      pages += '<div class="page">' + list.slice(i, i + PER).map(function (m) {
+        return '<div class="c"><div class="nm">' + esc(m.name) + "</div>" +
+          (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
+          '<div class="mid"><div class="qr">' + qrSvg(m.code) + "</div>" +
+          '<div class="rt"><div class="bc">' + barcodeSvg(m.code, 2, 30) + '</div><div class="cd">' + esc(m.code) +
+          '</div><div class="ev">' + EVENT + "</div>" +
+          (firstAid() ? '<div class="fa">First aid ' + esc(firstAid()) + "</div>" : "") + "</div></div></div>";
+      }).join("") + "</div>";
+      if (back) pages += '<div class="page">' + new Array(PER + 1).join(back) + "</div>";
+    }
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + EVENT + ' — lanyard cards</title>' +
+      '<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&display=swap" rel="stylesheet"><style>' +
+      "@page{size:A4;margin:0}" +
+      "*{-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
       "body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#16333A;background:#fff}" +
-      ".grid{display:grid;grid-template-columns:repeat(2,88mm);gap:4mm;justify-content:center}" +
+      ".page{width:210mm;height:297mm;display:grid;grid-template-columns:repeat(2,88mm);grid-auto-rows:54mm;gap:4mm;" +
+      "justify-content:center;align-content:center;break-after:page;box-sizing:border-box}" +
       ".c{width:88mm;height:54mm;border:1px dashed #bbb;border-radius:3mm;padding:4mm;display:flex;flex-direction:column;" +
-      "box-sizing:border-box;page-break-inside:avoid;background-image:url(" + location.origin + "/logo.png);" +
+      "box-sizing:border-box;overflow:hidden;background-image:url(" + location.origin + "/logo.png);" +
       "background-repeat:no-repeat;background-position:right 3mm top 3mm;background-size:14mm 14mm}" +
-      ".nm{font-size:15pt;font-weight:700;line-height:1.1;max-width:68mm}" +
-      ".cr{font-size:8.5pt;color:#5F7A80;margin-top:1mm}" +
+      ".nm{font-size:15pt;font-weight:700;line-height:1.1;max-width:66mm}" +
+      ".cr{font-size:8.5pt;color:#5F7A80;margin-top:1mm;max-width:66mm}" +
       ".mid{display:flex;gap:4mm;align-items:flex-end;margin-top:auto}" +
       ".qr{width:25mm;flex:0 0 25mm}.qr svg{width:100%;height:auto;display:block}" +
-      ".rt{flex:1 1 auto;min-width:0}.bc svg{width:100%;height:11mm}" +
+      ".rt{flex:1 1 auto;min-width:0}.bc svg{width:100%;height:10mm}" +
       ".cd{font-family:monospace;font-size:10.5pt;letter-spacing:.2em;margin-top:1mm;color:#4A5F63;font-weight:bold}" +
-      ".ev{font-size:7.5pt;color:#1B7F79;font-weight:bold;margin-top:1mm}" +
+      ".ev{font-size:7.5pt;color:#1B7F79;font-weight:bold;margin-top:.8mm}" +
+      ".fa{font-size:7.5pt;color:#E4574B;font-weight:bold}" +
+      ".back{padding:0;border-style:solid;border-color:#2BA8A0;background:#2BA8A0 url(" + location.origin + "/numbers.webp) center/cover no-repeat}" +
+      ".panel{margin:0 8.6mm;height:100%;background:#fff;padding:2.5mm 3mm;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}" +
+      ".tt{font-family:Fredoka,Arial,sans-serif;font-weight:700;font-size:13pt;text-align:center;text-decoration:underline;margin-bottom:2mm}" +
+      ".cols{columns:2;column-gap:3mm;font-size:8.6pt;line-height:1.3;color:#1B7F79;font-weight:bold}" +
+      ".g{break-inside:avoid;margin-bottom:2.2mm}" +
+      ".gh{font-family:Fredoka,Arial,sans-serif;font-size:8.4pt;letter-spacing:.04em;text-transform:uppercase;color:#000}" +
+      ".g b{color:#1B7F79}.g i{display:block;font-style:normal;font-weight:normal;font-size:7pt}" +
+      ".urgent,.urgent .gh{color:#E4574B}.urgent div:not(.gh){font-size:12pt;font-family:Fredoka,Arial,sans-serif}" +
+      "@media screen{body{background:#eee}.page{background:#fff;margin:10mm auto;box-shadow:0 2px 10px rgba(0,0,0,.15)}}" +
       "@media print{.note{display:none}}" +
-      '</style></head><body><p class="note" style="font-size:10pt;color:#555">' + members.size +
-      " cards — print at 100% (turn off “fit to page”), then cut along the dashed lines.</p>" +
-      '<div class="grid">' + cards + "</div></body></html>";
+      '</style></head><body><p class="note" style="font-size:11pt;color:#555;text-align:center;margin:10mm 0 0">' +
+      list.length + " cards. Print double sided, flipped on the long edge, at 100% (turn off “fit to page”). Then cut along the lines.</p>" +
+      pages + "</body></html>";
   }
 
   /* ---------------- gate ---------------- */
@@ -582,99 +704,109 @@
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
   });
-  $("showAll").addEventListener("change", function () { ui.showAll = this.checked; renderDests(); });
-  function pickDest(e) {
-    var b = e.target.closest("[data-dest]");
-    if (!b) return;
-    ui.dest = b.dataset.dest === ui.dest ? null : b.dataset.dest;
+
+  function chooseDest(id) {
+    ui.dest = id;
+    lastScan = { code: null, place: null, at: 0 };
     renderDests();
     focusScan();
   }
-  $("fixedDests").addEventListener("click", pickDest);
-  $("actDests").addEventListener("click", pickDest);
+  $("dests").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-dest]");
+    if (b) chooseDest(b.dataset.dest === ui.dest ? null : b.dataset.dest);
+  });
+  $("destMore").addEventListener("change", function () {
+    if (this.value) chooseDest(this.value);
+    this.value = "";
+  });
 
   $("scan").addEventListener("keydown", function (e) {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    processScan($("scan").value);
+    handleEntry($("scan").value);
     $("scan").value = "";
     lockScan();
+  });
+  $("scan").addEventListener("input", function () {
+    var v = this.value;
+    renderFind(members.has(v.trim().toUpperCase()) ? [] : nameMatches(v));
   });
   /* Tapping the box is the one way the keyboard opens on a phone. */
   $("scan").addEventListener("click", function () {
     if (this.hasAttribute("readonly")) { this.removeAttribute("readonly"); this.focus(); }
   });
+  $("findResults").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-pick]");
+    if (!b) return;
+    processScan(b.dataset.pick);
+    $("scan").value = "";
+    renderFind([]);
+    lockScan();
+  });
   document.addEventListener("keydown", function (e) {
-    if (TOUCH || ui.view !== "station" || !$("modal").hidden || !$("gate").hidden) return;
+    if (TOUCH || ui.view !== "station" || !$("gate").hidden) return;
+    if (document.querySelector(".modal:not([hidden])")) return;
     var t = e.target;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
     if (e.key.length === 1 && /[a-z0-9]/i.test(e.key)) $("scan").focus();
   });
   $("camBtn").addEventListener("click", toggleCamera);
   $("undoBtn").addEventListener("click", undoLast);
-  $("findBtn").addEventListener("click", function () {
-    var w = $("findWrap");
-    w.hidden = !w.hidden;
-    if (!w.hidden) $("findInput").focus();
-  });
-  $("findInput").addEventListener("input", function () {
-    var q = this.value.trim().toLowerCase();
-    var list = q ? sortedMembers().filter(function (m) {
-      return (m.name + " " + (m.crew || "")).toLowerCase().indexOf(q) >= 0;
-    }).slice(0, 12) : [];
-    $("findResults").innerHTML = list.map(function (m) {
-      return '<button class="person" type="button" data-pick="' + esc(m.code) + '"><b>' + esc(m.name) + "</b><small>" +
-        esc(m.crew || m.code) + " · " + esc(placeLabel(m.place)) + "</small></button>";
-    }).join("") || (q ? '<p class="muted">No match.</p>' : "");
-  });
-  $("findResults").addEventListener("click", function (e) {
-    var b = e.target.closest("[data-pick]");
-    if (!b) return;
-    processScan(b.dataset.pick);
-    $("findInput").value = "";
-    $("findResults").innerHTML = "";
-  });
   $("boardSearch").addEventListener("input", renderBoard);
   $("mSearch").addEventListener("input", renderMembers);
-  $("dayPick").addEventListener("change", function () { ui.day = this.value; renderSchedule(); });
 
-  $("actAdd").addEventListener("click", async function () {
-    var name = $("actName").value.trim();
-    if (!name) { $("actStatus").textContent = "Give the activity a name."; return; }
-    try {
-      await api("activities", {
-        method: "POST",
-        body: {
-          name: name, loc: $("actLoc").value.trim(), date: $("actDate").value || todayISO(),
-          start: $("actStart").value || "09:00", end: $("actEnd").value || "12:00",
-          site: $("actSite").value, dest: $("actDest").checked
-        }
-      });
-      $("actName").value = ""; $("actLoc").value = "";
-      $("actStatus").textContent = "Added to the programme.";
-      refresh(true);
-    } catch (e) { $("actStatus").textContent = e.message || "That didn't save."; }
+  /* programme */
+  $("days").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-day]");
+    if (b) { ui.day = b.dataset.day; renderSchedule(); }
   });
-  $("actTable").addEventListener("click", function (e) {
-    var b = e.target.closest("[data-delact]");
-    if (!b) return;
-    var id = b.dataset.delact, there = 0;
-    members.forEach(function (m) { if (m.place === id) there++; });
-    arm(b, "act:" + id, there ? there + " still there — remove?" : "Remove?", async function () {
-      if (ui.dest === id) ui.dest = null;
-      await api("activities/" + id, { method: "DELETE" }).catch(function () {});
+  $("agenda").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-act]");
+    if (b) openAct(b.dataset.act);
+  });
+  $("actNew").addEventListener("click", function () { openAct(null); });
+  $("actForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var body = {
+      name: $("actName").value.trim(), loc: $("actLoc").value.trim(), date: $("actDate").value,
+      start: $("actStart").value, end: $("actEnd").value, site: $("actSite").value, dest: $("actDest").checked
+    };
+    if (!body.name) { $("actStatus").textContent = "Give the activity a name."; return; }
+    if (!body.date || !body.start || !body.end) { $("actStatus").textContent = "Pick a date, start and end."; return; }
+    if (body.end <= body.start) { $("actStatus").textContent = "It has to end after it starts."; return; }
+    $("actStatus").textContent = "Saving…";
+    try {
+      if (ui.act) await api("activities/" + encodeURIComponent(ui.act), { method: "PUT", body: body });
+      else await api("activities", { method: "POST", body: body });
+      ui.day = body.date;
+      closeModals();
       refresh(true);
+    } catch (err) { $("actStatus").textContent = err.message || "That didn't save."; }
+  });
+  $("actDel").addEventListener("click", function () {
+    var id = ui.act;
+    if (!id) return;
+    var there = countAt(id);
+    arm(this, "act:" + id, there ? "Delete? " + there + " there go back on site" : "Tap again to delete", async function () {
+      try {
+        await api("activities/" + encodeURIComponent(id), { method: "DELETE" });
+        if (ui.dest === id) ui.dest = null;
+        closeModals();
+        refresh(true);
+      } catch (err) { $("actStatus").textContent = err.message || "That didn't delete."; }
     });
   });
 
+  /* people */
   async function addPeople(people, statusEl) {
     try {
       var res = await api("members", { method: "POST", body: { people: people } });
       statusEl.textContent = res.added.length === 1
         ? res.added[0].name + " added — code " + res.added[0].code + "."
-        : res.added.length + " people added. Download the print sheet when the list is final.";
+        : res.added.length + " people added.";
       refresh(true);
-    } catch (e) { statusEl.textContent = e.message || "That didn't save."; }
+      return true;
+    } catch (e) { statusEl.textContent = e.message || "That didn't save."; return false; }
   }
   $("mAdd").addEventListener("click", function () {
     var name = $("mName").value.trim();
@@ -685,52 +817,64 @@
   });
   $("mName").addEventListener("keydown", function (e) { if (e.key === "Enter") $("mAdd").click(); });
   $("mCrew").addEventListener("keydown", function (e) { if (e.key === "Enter") $("mAdd").click(); });
-  $("mBulkAdd").addEventListener("click", function () {
+  $("mBulkAdd").addEventListener("click", async function () {
     var people = $("mBulk").value.split("\n").map(function (l) { return l.trim(); }).filter(Boolean)
       .map(function (line) {
         var p = line.split(",");
         return { name: p[0], crew: p.slice(1).join(",") };
       });
     if (!people.length) { $("mStatus").textContent = "Paste some names first."; return; }
-    $("mBulk").value = "";
-    addPeople(people, $("mStatus"));
+    if (await addPeople(people, $("mStatus"))) $("mBulk").value = "";
   });
-  $("memTable").addEventListener("click", function (e) {
+  $("memList").addEventListener("click", function (e) {
     var card = e.target.closest("[data-card]");
     if (card) return openCard(card.dataset.card);
-    var del = e.target.closest("[data-delmem]");
-    if (del) {
-      var m = members.get(del.dataset.delmem);
-      if (m) arm(del, "mem:" + m.code, "Remove?", async function () {
-        await api("members/" + m.code, { method: "DELETE" }).catch(function () {});
+    var ed = e.target.closest("[data-editmem]");
+    if (ed) openMem(ed.dataset.editmem);
+  });
+  $("memForm").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var name = $("eName").value.trim();
+    if (!name) { $("memStatus").textContent = "Give them a name."; return; }
+    try {
+      await api("members/" + ui.mem, { method: "PUT", body: { name: name, crew: $("eCrew").value.trim() } });
+      closeModals();
+      refresh(true);
+    } catch (err) { $("memStatus").textContent = err.message || "That didn't save."; }
+  });
+  $("memDel").addEventListener("click", function () {
+    var code = ui.mem;
+    if (!code) return;
+    arm(this, "mem:" + code, "Tap again to remove", async function () {
+      try {
+        await api("members/" + code, { method: "DELETE" });
+        closeModals();
         refresh(true);
-      });
-    }
+      } catch (err) { $("memStatus").textContent = err.message || "That didn't remove."; }
+    });
   });
 
-  $("cardClose").addEventListener("click", function () { $("modal").hidden = true; });
-  $("modal").addEventListener("click", function (e) { if (e.target === $("modal")) $("modal").hidden = true; });
+  /* cards */
   $("cardPng").addEventListener("click", function () { if (ui.card) cardPng(ui.card); });
   $("cardLink").addEventListener("click", function () {
     if (!ui.card) return;
     var link = location.origin + "/p/" + ui.card;
-    if (navigator.clipboard) navigator.clipboard.writeText(link);
-    $("cardStatus").textContent = link;
+    if (navigator.clipboard) navigator.clipboard.writeText(link).catch(function () {});
+    $("cardStatus").innerHTML = 'Copied: <a href="' + esc(link) + '" target="_blank" rel="noopener">' + esc(link) + "</a>";
   });
   $("sheetBtn").addEventListener("click", function () {
     if (!members.size) { $("sheetStatus").textContent = "Add some people first."; return; }
     download("teen-beach-moonta-lanyard-cards.html", sheetHtml(), "text/html;charset=utf-8");
-    $("sheetStatus").textContent = "Saved — open it and print at 100%.";
+    $("sheetStatus").textContent = "Saved. Open it and print double sided at 100%.";
   });
 
   /* ---------------- boot ---------------- */
   (async function start() {
-    $("actDate").value = "2026-10-03";
     if (TOUCH) {
       document.body.classList.add("touch");
       $("scan").setAttribute("readonly", "readonly");
-      $("scan").placeholder = "Tap to type a code";
-      $("scanHint").textContent = "Scan with the camera, or tap the box above to type a code by hand.";
+      $("scan").placeholder = "Tap to type";
+      $("scanHint").textContent = "Use the camera, or tap the box to type.";
     }
     try { config = await (await fetch("/api/config")).json(); } catch (e) {}
     if (config.pinRequired && !pin()) showGate();
@@ -742,6 +886,7 @@
   setInterval(function () { if (!document.hidden) refresh(false); }, 4000);
   setInterval(function () {
     renderTally();
+    if (ui.view === "station") renderDests();
     if (ui.view === "board") renderBoard();
     if (ui.view === "schedule") renderSchedule();
   }, 30000);

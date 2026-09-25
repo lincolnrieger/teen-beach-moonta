@@ -18,6 +18,16 @@ async function bumpRev(env) {
   ).bind(String(Date.now())).run();
 }
 
+/* The numbers on the back of every lanyard and on everyone's own page. The
+   board reads them from /api/config, so this is the one place to change them. */
+const CONTACTS = [
+  { group: "Camp leads", name: "Ethan", tel: "0434 997 161" },
+  { group: "Camp leads", name: "Nikki", tel: "0412 584 406" },
+  { group: "First aid", name: "", tel: "0468 442 515", note: "Day or night" },
+  { group: "Out of hours", name: "Ethan", tel: "0434 997 161" },
+  { group: "Emergency", name: "", tel: "000", alt: "112", urgent: true }
+];
+
 function newCode() {
   const ab = "ACDEFHJKLMNPQRTUVWXY3479";
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -114,7 +124,8 @@ async function handleApi(request, env, url) {
   if (path === "config") {
     return json({
       pinRequired: Boolean(env.STAFF_PIN),
-      event: env.EVENT_NAME || "Teen Beach Moonta"
+      event: env.EVENT_NAME || "Teen Beach Moonta",
+      contacts: CONTACTS
     });
   }
 
@@ -145,7 +156,7 @@ async function handleApi(request, env, url) {
     });
   }
 
-  /* A scan just moves someone to the place the desk has selected: 'onsite',
+  /* A scan just moves someone to the place the board has selected: 'onsite',
      'home', or an activity id. There is no in/out flag to get out of step. */
   if (path === "scan" && method === "POST") {
     const { code, place } = await request.json();
@@ -211,6 +222,18 @@ async function handleApi(request, env, url) {
     return json({ ok: true, added });
   }
 
+  if (path.startsWith("members/") && method === "PUT") {
+    const code = path.slice(8).toUpperCase();
+    const body = await request.json();
+    const name = String(body.name || "").trim();
+    if (!name) return bad("Give them a name.");
+    const r = await env.DB.prepare("UPDATE members SET name = ?, crew = ? WHERE code = ?")
+      .bind(name, String(body.crew || "").trim(), code).run();
+    if (!r.meta || !r.meta.changes) return bad("unknown-code", 404);
+    await bumpRev(env);
+    return json({ ok: true });
+  }
+
   if (path.startsWith("members/") && method === "DELETE") {
     const code = path.slice(8).toUpperCase();
     await env.DB.batch([
@@ -221,13 +244,28 @@ async function handleApi(request, env, url) {
     return json({ ok: true });
   }
 
-  if (path === "activities" && method === "POST") {
+  /* Add a new activity, or change one that is already on the programme. */
+  if ((path === "activities" && method === "POST") || (path.startsWith("activities/") && method === "PUT")) {
     const a = await request.json();
-    if (!a.name) return bad("Give the activity a name.");
+    const name = String(a.name || "").trim();
+    if (!name) return bad("Give the activity a name.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(a.date || "")) return bad("Pick a date.");
+    if (!/^\d{2}:\d{2}$/.test(a.start || "") || !/^\d{2}:\d{2}$/.test(a.end || "")) return bad("Pick a start and end time.");
+    if (a.end <= a.start) return bad("It has to end after it starts.");
+    const fields = [name, String(a.loc || "").trim(), a.date, a.start, a.end, a.site === "off" ? "off" : "on", a.dest ? 1 : 0];
+    if (method === "PUT") {
+      const id = path.slice(11);
+      const r = await env.DB.prepare(
+        "UPDATE activities SET name = ?, loc = ?, date = ?, start = ?, end = ?, site = ?, dest = ? WHERE id = ?"
+      ).bind(...fields, id).run();
+      if (!r.meta || !r.meta.changes) return bad("That activity is gone.", 404);
+      await bumpRev(env);
+      return json({ ok: true, id });
+    }
     const id = newId("a");
     await env.DB.prepare(
       "INSERT INTO activities (id, name, loc, date, start, end, kind, site, dest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(id, a.name, a.loc || "", a.date, a.start, a.end, a.kind || "main", a.site === "off" ? "off" : "on", a.dest ? 1 : 0).run();
+    ).bind(id, fields[0], fields[1], fields[2], fields[3], fields[4], a.kind || "main", fields[5], fields[6]).run();
     await bumpRev(env);
     return json({ ok: true, id });
   }
@@ -246,45 +284,83 @@ async function handleApi(request, env, url) {
   return bad("Unknown endpoint.", 404);
 }
 
-/* A plain page for one person: their code as a QR code and a barcode. Send them
-   https://your-site/p/THEIRCODE and they can keep it on their phone. */
+/* The important numbers as a list of tap-to-call rows. */
+function contactsHtml() {
+  const telHref = (t) => "tel:" + t.replace(/\s+/g, "");
+  let html = "";
+  let last = null;
+  for (const c of CONTACTS) {
+    if (c.group !== last) {
+      if (last !== null) html += "</div>";
+      html += `<div class="grp${c.urgent ? " urgent" : ""}"><h3>${esc(c.group)}</h3>`;
+      last = c.group;
+    }
+    const num = `<a href="${telHref(c.tel)}">${esc(c.tel)}</a>` +
+      (c.alt ? ` <span>or</span> <a href="${telHref(c.alt)}">${esc(c.alt)}</a>` : "");
+    html += `<div class="ln">${c.name ? `<b>${esc(c.name)}</b>` : ""}${num}` +
+      (c.note ? `<small>${esc(c.note)}</small>` : "") + "</div>";
+  }
+  return html + (last !== null ? "</div>" : "");
+}
+
+/* A plain page for one person: their code as a QR code and a barcode, and the
+   numbers to call. Send them https://your-site/p/THEIRCODE to keep on their phone. */
 async function personPage(code, env) {
   await ensureSchema(env);
   const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code.toUpperCase()).first();
   const event = env.EVENT_NAME || "Teen Beach Moonta";
+  const head = `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Archivo:wght@400;600;700&display=swap" rel=stylesheet>
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;min-height:100vh;color:#16333A;font-family:Archivo,system-ui,sans-serif;text-align:center;
+   background:linear-gradient(#2BA8A0,#1B7F79) fixed}
+ main{max-width:400px;margin:0 auto;padding:22px 16px 40px}
+ .card{background:#fff;border-radius:22px;padding:22px 20px;box-shadow:0 14px 40px rgba(0,0,0,.18)}
+ .card + .card{margin-top:16px}
+ .logo{width:84px;height:84px;border-radius:50%;margin-top:-4px}
+ h1{font-family:Fredoka,sans-serif;font-weight:600;font-size:28px;line-height:1.1;margin:10px 0 2px}
+ .crew{color:#5F7A80;font-size:15px}
+ .qr{width:210px;margin:18px auto 0}
+ .qr svg,.bc svg{width:100%;display:block}
+ .bc{max-width:260px;margin:14px auto 0}
+ .bc svg{height:56px}
+ .code{font-family:ui-monospace,Menlo,monospace;font-size:20px;letter-spacing:.24em;font-weight:700;margin-top:8px}
+ h2{font-family:Fredoka,sans-serif;font-weight:700;font-size:22px;margin:0 0 6px}
+ .grp{text-align:left;padding:12px 0;border-top:1px solid #E3ECEC}
+ .grp:first-of-type{border-top:0}
+ .grp h3{margin:0 0 4px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#16333A}
+ .ln{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:17px;margin-top:2px}
+ .ln b{font-weight:700;min-width:52px}
+ .ln a{color:#1B7F79;font-weight:700;text-decoration:none;font-variant-numeric:tabular-nums}
+ .ln small{flex-basis:100%;color:#5F7A80;font-size:13px}
+ .ln span{color:#5F7A80;font-size:14px}
+ .urgent h3,.urgent .ln a{color:#E4574B}
+ .urgent .ln a{font-size:22px;font-family:Fredoka,sans-serif}
+</style>`;
   if (!member) {
     return new Response(
-      `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">` +
-      `<title>${esc(event)}</title><body style="font-family:system-ui;padding:40px;text-align:center;color:#16333A">` +
-      `<h1>That code isn't on the list</h1><p>Check with the camp registration desk.</p>`,
+      head + `<title>${esc(event)}</title><main><div class=card><img class=logo src="/logo.png" alt="">` +
+      `<h1>That code isn't on the list</h1><p class=crew>Check with a camp lead.</p></div>` +
+      `<div class=card><h2>Important numbers</h2>${contactsHtml()}</div></main>`,
       { status: 404, headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
   return new Response(
-    `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>${esc(member.name)} — ${esc(event)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Archivo:wght@400;600;700&display=swap" rel=stylesheet>
-<style>
- body{margin:0;background:#fff;color:#16333A;font-family:Archivo,system-ui,sans-serif;text-align:center}
- .top{background:#2BA8A0;color:#fff;padding:26px 20px 30px}
- .top img{width:92px;height:92px;border-radius:50%}
- h1{font-family:Fredoka,sans-serif;font-size:28px;margin:16px 0 4px}
- .crew{opacity:.9;font-size:15px}
- main{padding:26px 20px 50px;max-width:420px;margin:0 auto}
- .qr{width:230px;margin:0 auto}
- .qr svg{width:100%;height:auto;display:block}
- .bc{margin:20px auto 0;max-width:300px}
- .bc svg{width:100%;height:68px;display:block}
- .code{font-family:ui-monospace,Menlo,monospace;font-size:22px;letter-spacing:.24em;font-weight:700;margin-top:10px}
- p.hint{color:#5F7A80;font-size:14px;margin-top:18px;line-height:1.5}
-</style>
-<div class=top><img src="/logo.png" alt=""><h1>${esc(member.name)}</h1><div class=crew>${esc(member.crew || event)}</div></div>
+    head + `<title>${esc(member.name)} — ${esc(event)}</title>
 <main>
- <div class=qr id=qr></div>
- <div class=bc id=bc></div>
- <div class=code>${esc(member.code)}</div>
- <p class=hint>Screenshot this page — the desk can scan either code from your photos.</p>
- <p class=hint>Show it whenever you move between camp and an activity.</p>
+ <div class=card>
+  <img class=logo src="/logo.png" alt="${esc(event)}">
+  <h1>${esc(member.name)}</h1>
+  <div class=crew>${esc(member.crew || event)}</div>
+  <div class=qr id=qr></div>
+  <div class=bc id=bc></div>
+  <div class=code>${esc(member.code)}</div>
+ </div>
+ <div class=card>
+  <h2>Important numbers</h2>
+  ${contactsHtml()}
+ </div>
 </main>
 <script src="/vendor/qrcode.js"></script>
 <script src="/vendor/JsBarcode.all.min.js"></script>
@@ -298,7 +374,7 @@ async function personPage(code, env) {
    '<rect width="' + total + '" height="' + total + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
  try {
    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-   JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 68, displayValue: false, margin: 0, background: "#ffffff" });
+   JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 56, displayValue: false, margin: 0, background: "#ffffff" });
    svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
    var bw = parseFloat(svg.getAttribute("width")), bh = parseFloat(svg.getAttribute("height"));
    if (bw && bh) svg.setAttribute("viewBox", "0 0 " + bw + " " + bh);
