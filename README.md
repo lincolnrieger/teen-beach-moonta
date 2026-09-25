@@ -1,6 +1,6 @@
 # Teen Beach Moonta — who's where
 
-Everyone at camp is somewhere. They're on site, they're at one of the
+Everyone at the camp is somewhere. They're on site, they're at one of the
 programme's activities, or they've gone home. Scan a lanyard and they move —
 there's no separate sign out and sign in to fall out of step with each other.
 
