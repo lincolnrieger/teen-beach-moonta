@@ -1,16 +1,18 @@
 # Teen Beach Moonta — who's where
 
 Everyone at the camp is somewhere. They're on site, they're at one of the
-programme's activities, or they've gone home. Scan a lanyard and they move —
+programme's activities, or they've signed out of camp. Scan a lanyard and they
+move —
 there's no separate sign out and sign in to fall out of step with each other.
 
 Runs on Cloudflare Workers with a D1 database and deploys from GitHub on every
 push.
 
-- **Scan** — pick where they're going, scan a lanyard, done. **On site**,
-  **Going home** and whatever's on now or next are one tap away; everything else
-  on the programme is in the dropdown under them. The one box takes a scanner,
-  a typed code or a typed name.
+- **Scan** — pick where they're going, scan a lanyard, done. **On site** and
+  **Signing out** are the two big buttons; under them is one day of the
+  programme at a time (finished activities fold away). Whatever's picked is
+  shown right above the scan box. The one box takes a scanner, a typed code or
+  a typed name.
 - **Who's where** — live counts and everyone grouped by the place they're at,
   with anyone past an off-site activity's return time flagged.
 - **Programme** — all four days are loaded from the Branch Moot schedule, each
@@ -18,7 +20,7 @@ push.
   or add your own.
 - **People** — everyone gets a six character code as a QR code *and* a barcode.
   Printable card sheet (important numbers on the back), phone image, or their
-  own web page with the numbers to call.
+  own web page with their barcode, the whole programme and the numbers to call.
 
 ---
 
@@ -112,8 +114,9 @@ not for the camp.
    ```
 
 2. Send each person `https://your-site/p/THEIRCODE` (**Card** → **Copy their
-   link**). Their page shows their QR code and their barcode, so it works
-   with a camera or a laser scanner either way.
+   link**). Their page shows their barcode and code (for a USB scanner, or to
+   type in) and the programme, with what's on now at the top. The printed
+   lanyard still has the QR code for the camera.
 3. On the **Scan** tab: pick where they're going, scan, repeat. A $30 USB barcode scanner
    is the most reliable option — it just types the code and presses enter. The
    camera and the search-by-name fallback both work too.

@@ -303,28 +303,29 @@ function contactsHtml() {
   return html + (last !== null ? "</div>" : "");
 }
 
-/* A plain page for one person: their code as a QR code and a barcode, and the
-   numbers to call. Send them https://your-site/p/THEIRCODE to keep on their phone. */
+/* A plain page for one person: their code as a barcode, what's on over the
+   camp, and the numbers to call. Send them https://your-site/p/THEIRCODE to
+   keep on their phone. */
 async function personPage(code, env) {
   await ensureSchema(env);
   const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code.toUpperCase()).first();
   const event = env.EVENT_NAME || "Teen Beach Moonta";
   const head = `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Archivo:wght@400;600;700&display=swap" rel=stylesheet>
+<meta name=theme-color content="#2BA8A0">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Archivo:wght@400;500;600;700&display=swap" rel=stylesheet>
 <style>
  *{box-sizing:border-box}
+ [hidden]{display:none !important}
  body{margin:0;min-height:100vh;color:#16333A;font-family:Archivo,system-ui,sans-serif;text-align:center;
-   background:linear-gradient(#2BA8A0,#1B7F79) fixed}
- main{max-width:400px;margin:0 auto;padding:22px 16px 40px}
+   background:linear-gradient(#2BA8A0,#1B7F79) fixed;-webkit-font-smoothing:antialiased}
+ main{max-width:440px;margin:0 auto;padding:22px 14px 40px}
  .card{background:#fff;border-radius:22px;padding:22px 20px;box-shadow:0 14px 40px rgba(0,0,0,.18)}
  .card + .card{margin-top:16px}
  .logo{width:84px;height:84px;border-radius:50%;margin-top:-4px}
  h1{font-family:Fredoka,sans-serif;font-weight:600;font-size:28px;line-height:1.1;margin:10px 0 2px}
  .crew{color:#5F7A80;font-size:15px}
- .qr{width:210px;margin:18px auto 0}
- .qr svg,.bc svg{width:100%;display:block}
- .bc{max-width:260px;margin:14px auto 0}
- .bc svg{height:56px}
+ .bc{max-width:280px;margin:18px auto 0}
+ .bc svg{width:100%;height:64px;display:block}
  .code{font-family:ui-monospace,Menlo,monospace;font-size:20px;letter-spacing:.24em;font-weight:700;margin-top:8px}
  h2{font-family:Fredoka,sans-serif;font-weight:700;font-size:22px;margin:0 0 6px}
  .grp{text-align:left;padding:12px 0;border-top:1px solid #E3ECEC}
@@ -337,6 +338,53 @@ async function personPage(code, env) {
  .ln span{color:#5F7A80;font-size:14px}
  .urgent h3,.urgent .ln a{color:#E4574B}
  .urgent .ln a{font-size:22px;font-family:Fredoka,sans-serif}
+
+ /* programme */
+ .prog{padding:0;overflow:hidden;text-align:left}
+ .prog-top{background:#FFD23F;padding:18px 20px 16px;position:relative}
+ .prog-top h2{margin:0;font-size:24px}
+ .prog-top p{margin:2px 0 0;font-size:13.5px;font-weight:600;color:#6B5310}
+ .spot{margin:14px 20px 0;border-radius:16px;padding:13px 15px;background:#E3F5F3;border:2px solid #BFE6E2}
+ .spot small{display:block;font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#1B7F79}
+ .spot b{display:block;font-family:Fredoka,sans-serif;font-weight:600;font-size:19px;line-height:1.2;margin-top:2px}
+ .spot span{display:block;font-size:13.5px;color:#5F7A80;margin-top:1px}
+ .spot b + b{margin-top:6px}
+ .spot.off{background:#FFF0D6;border-color:#EFD49B}
+ .spot.off small{color:#A4650B}
+ .dayz{display:flex;gap:6px;padding:16px 20px 4px;overflow-x:auto;scrollbar-width:none}
+ .dayz button{font:inherit;flex:1 0 auto;cursor:pointer;border:2px solid #DCE7E7;background:#fff;color:#5F7A80;
+   border-radius:14px;padding:7px 10px;line-height:1.15;text-align:center}
+ .dayz button b{display:block;font-family:Fredoka,sans-serif;font-weight:600;font-size:17px;color:#16333A}
+ .dayz button small{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+ .dayz button[aria-pressed=true]{background:#16333A;border-color:#16333A;color:#FFD23F}
+ .dayz button[aria-pressed=true] b{color:#fff}
+ .tl{list-style:none;margin:0;padding:10px 20px 6px;position:relative}
+ .tl li{display:grid;grid-template-columns:52px 18px 1fr;column-gap:8px;padding:9px 0;position:relative}
+ .tl li::before{content:"";position:absolute;left:68px;top:0;bottom:0;width:2px;background:#E3ECEC}
+ .tl li:first-child::before{top:16px}
+ .tl li:last-child::before{bottom:calc(100% - 16px)}
+ .tl .tm{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums;padding-top:1px}
+ .tl .tm small{display:block;font-weight:500;font-size:12px;color:#5F7A80}
+ .tl .dot{width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #2BA8A0;margin:3px 0 0 2px;position:relative;z-index:1}
+ .tl .nm{font-weight:700;font-size:16px;line-height:1.25}
+ .tl .meta{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:4px;font-size:12.5px;color:#5F7A80;align-items:center}
+ .chip{font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:#E3F5F3;color:#1B7F79;letter-spacing:.02em}
+ .chip.off{background:#FFF0D6;color:#A4650B}
+ .chip.meal{background:#FFF6DA;color:#8A6A12}
+ .chip.now{background:#F5459B;color:#fff}
+ .tl li.off .dot{border-color:#F5871F}
+ .tl li.meal .dot{border-color:#FFD23F;background:#FFF6DA}
+ .tl li.quiet .nm{font-weight:600;font-size:14.5px;color:#5F7A80}
+ .tl li.quiet .dot{border-color:#C6D6D9;width:10px;height:10px;margin:5px 0 0 4px}
+ .tl li.kitchen .nm{font-weight:500;font-size:14px;color:#5F7A80}
+ .tl li.kitchen .dot{border-color:#C6D6D9;width:10px;height:10px;margin:5px 0 0 4px}
+ .tl li.now{background:#E3F5F3;border-radius:14px;margin:2px -10px;padding:9px 10px}
+ .tl li.now::before{left:78px}
+ .tl li.now .dot{background:#2BA8A0;box-shadow:0 0 0 4px rgba(43,168,160,.25)}
+ .tl li.done{opacity:.5}
+ .tl-empty{padding:22px 20px;color:#5F7A80;text-align:center}
+ .opt{display:flex;align-items:center;gap:8px;justify-content:center;padding:6px 20px 18px;font-size:13px;color:#5F7A80;font-weight:600;cursor:pointer}
+ .opt input{width:16px;height:16px;margin:0;accent-color:#2BA8A0}
 </style>`;
   if (!member) {
     return new Response(
@@ -346,6 +394,9 @@ async function personPage(code, env) {
       { status: 404, headers: { "content-type": "text/html; charset=utf-8" } }
     );
   }
+  const acts = await env.DB.prepare("SELECT name, loc, date, start, end, kind, site FROM activities ORDER BY date, start, end").all();
+  /* Safe to drop straight into a <script>: nothing in it can close the tag. */
+  const programme = JSON.stringify(acts.results || []).replace(/</g, "\\u003c");
   return new Response(
     head + `<title>${esc(member.name)} — ${esc(event)}</title>
 <main>
@@ -353,33 +404,135 @@ async function personPage(code, env) {
   <img class=logo src="/logo.png" alt="${esc(event)}">
   <h1>${esc(member.name)}</h1>
   <div class=crew>${esc(member.crew || event)}</div>
-  <div class=qr id=qr></div>
   <div class=bc id=bc></div>
   <div class=code>${esc(member.code)}</div>
+ </div>
+ <div class="card prog">
+  <div class=prog-top><h2>What's on</h2><p>${esc(event)} · 2–5 October</p></div>
+  <div class=spot id=spot hidden></div>
+  <div class=dayz id=dayz></div>
+  <ol class=tl id=tl></ol>
+  <label class=opt id=kitchenOpt hidden><input type=checkbox id=kitchen> Show kitchen and hall times</label>
  </div>
  <div class=card>
   <h2>Important numbers</h2>
   ${contactsHtml()}
  </div>
 </main>
-<script src="/vendor/qrcode.js"></script>
 <script src="/vendor/JsBarcode.all.min.js"></script>
 <script>
  var CODE = ${JSON.stringify(member.code)};
- var q = qrcode(0, "M"); q.addData(CODE); q.make();
- var n = q.getModuleCount(), quiet = 2, total = n + quiet * 2, d = "";
- for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (c + quiet) + " " + (r + quiet) + "h1v1h-1z";
- document.getElementById("qr").innerHTML =
-   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + total + ' ' + total + '" shape-rendering="crispEdges">' +
-   '<rect width="' + total + '" height="' + total + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+ var PROGRAMME = ${programme};
  try {
    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-   JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 56, displayValue: false, margin: 0, background: "#ffffff" });
+   JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 64, displayValue: false, margin: 0, background: "#ffffff" });
    svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
    var bw = parseFloat(svg.getAttribute("width")), bh = parseFloat(svg.getAttribute("height"));
    if (bw && bh) svg.setAttribute("viewBox", "0 0 " + bw + " " + bh);
    document.getElementById("bc").appendChild(svg);
  } catch (e) {}
+
+ (function () {
+   var $ = function (id) { return document.getElementById(id); };
+   var esc = function (s) {
+     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+     });
+   };
+   var KEY = "tbm.kitchen";
+   var showKitchen = false;
+   try { showKitchen = localStorage.getItem(KEY) === "1"; } catch (e) {}
+   var day = null;
+
+   function iso(d) {
+     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+   }
+   function at(date, hhmm) { var t = new Date(date + "T" + hhmm + ":00").getTime(); return isNaN(t) ? 0 : t; }
+   function dayName(d, opts) { var t = new Date(d + "T12:00:00"); return isNaN(t) ? d : t.toLocaleDateString(undefined, opts); }
+   function fromNow(ms) {
+     var m = Math.round(ms / 60000);
+     if (m < 60) return "in " + Math.max(1, m) + " min";
+     var h = Math.floor(m / 60), r = m % 60;
+     return "in " + h + " hr" + (r ? " " + r + " min" : "");
+   }
+   /* Kitchen prep, clean-ups and the hall's dry zone are for the crew running
+      them — tucked away unless someone asks to see them. */
+   function isKitchen(a) { return a.kind === "cater"; }
+   function items() { return PROGRAMME.filter(function (a) { return showKitchen || !isKitchen(a); }); }
+
+   function renderSpot(list, now) {
+     var el = $("spot");
+     var live = list.filter(function (a) { return a.kind !== "camp" && at(a.date, a.start) <= now && now < at(a.date, a.end); });
+     if (live.length) {
+       el.className = "spot" + (live.every(function (a) { return a.site === "off"; }) ? " off" : "");
+       el.innerHTML = "<small>Happening now</small>" + live.map(function (a) {
+         return "<b>" + esc(a.name) + "</b><span>Until " + esc(a.end) + (a.loc ? " · " + esc(a.loc) : "") +
+           (a.site === "off" ? " · off site" : "") + "</span>";
+       }).join("");
+       el.hidden = false;
+       return;
+     }
+     var next = list.filter(function (a) { return at(a.date, a.start) > now; })[0];
+     if (!next) { el.hidden = true; return; }
+     var soon = at(next.date, next.start) - now;
+     el.className = "spot" + (next.site === "off" ? " off" : "");
+     el.innerHTML = "<small>Up next</small><b>" + esc(next.name) + "</b><span>" +
+       (soon < 18 * 3600000 ? fromNow(soon) + " · " + esc(next.start) : dayName(next.date, { weekday: "long", day: "numeric", month: "long" }) + " at " + esc(next.start)) +
+       (next.loc ? " · " + esc(next.loc) : "") + "</span>";
+     el.hidden = false;
+   }
+
+   function render() {
+     var now = Date.now(), today = iso(new Date());
+     var list = items();
+     var days = [];
+     list.forEach(function (a) { if (days.indexOf(a.date) < 0) days.push(a.date); });
+     $("kitchenOpt").hidden = !PROGRAMME.some(isKitchen);
+     $("kitchen").checked = showKitchen;
+     if (!days.length) {
+       $("dayz").innerHTML = "";
+       $("tl").innerHTML = '<li class=tl-empty style="display:block">The programme is on its way.</li>';
+       $("spot").hidden = true;
+       return;
+     }
+     if (!day || days.indexOf(day) < 0) {
+       day = days.indexOf(today) >= 0 ? today
+         : days.filter(function (d) { return list.some(function (a) { return a.date === d && at(a.date, a.end) > now; }); })[0]
+           || days[days.length - 1];
+     }
+     renderSpot(list, now);
+     $("dayz").innerHTML = days.map(function (d) {
+       return '<button type=button data-day="' + d + '" aria-pressed="' + (d === day) + '"><small>' +
+         esc(d === today ? "Today" : dayName(d, { weekday: "short" })) + "</small><b>" + esc(dayName(d, { day: "numeric" })) + "</b></button>";
+     }).join("");
+     $("tl").innerHTML = list.filter(function (a) { return a.date === day; }).map(function (a) {
+       var s = at(a.date, a.start), e = at(a.date, a.end);
+       var live = s <= now && now < e, done = now >= e;
+       var cls = [a.site === "off" ? "off" : "", a.kind === "meal" ? "meal" : "", a.kind === "camp" ? "quiet" : "",
+         isKitchen(a) ? "kitchen" : "", live ? "now" : done ? "done" : ""].filter(Boolean).join(" ");
+       var chips = (live ? '<span class="chip now">Now</span>' : "") +
+         (a.site === "off" ? '<span class="chip off">Off site</span>' : "") +
+         (a.kind === "meal" ? '<span class="chip meal">Meal</span>' : "") +
+         (a.loc ? "<span>" + esc(a.loc) + "</span>" : "");
+       return '<li class="' + cls + '"><div class=tm>' + esc(a.start) + "<small>" + esc(a.end) + "</small></div>" +
+         '<div class=dot></div><div><div class=nm>' + esc(a.name) + "</div>" +
+         (chips ? "<div class=meta>" + chips + "</div>" : "") + "</div></li>";
+     }).join("");
+   }
+
+   $("dayz").addEventListener("click", function (e) {
+     var b = e.target.closest("[data-day]");
+     if (b) { day = b.getAttribute("data-day"); render(); }
+   });
+   $("kitchen").addEventListener("change", function () {
+     showKitchen = this.checked;
+     try { localStorage.setItem(KEY, showKitchen ? "1" : "0"); } catch (e) {}
+     render();
+   });
+   render();
+   setInterval(function () { if (!document.hidden) render(); }, 60000);
+   document.addEventListener("visibilitychange", function () { if (!document.hidden) render(); });
+ })();
 </script>`,
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }
   );
