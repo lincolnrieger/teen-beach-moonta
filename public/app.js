@@ -16,7 +16,6 @@
   var SVGNS = "http://www.w3.org/2000/svg";
   var EVENT = "Teen Beach Moonta";
   var DATES = "2–5 October 2026";
-  var LOGO = "/logo.png";
 
   /* A phone has no keyboard to type with, so nothing on the page may steal
      focus into a text field — that is what pops the on-screen keyboard open
@@ -575,58 +574,102 @@
   }
 
   /* ---------------- cards ---------------- */
-  var logoImg = new Image();
-  logoImg.src = LOGO;
+  /* Lanyard cards are portrait and printed over the camp artwork: the frame on
+     the front, the important numbers sheet on the back. Everything on the front
+     is placed as a fraction of the card, so the same layout works for the
+     preview, the print sheet and the saved image. The frame's white panel runs
+     from 10% to 90% across and 7% to 90% down, with the camp badge in the
+     bottom right corner. */
+  var FRONT = "/card-front.webp", BACK = "/card-back.webp";
+  var ART_W = 1240, ART_H = 1748;
+  var frontImg = new Image();
+  frontImg.src = FRONT;
 
   function firstAid() {
     var c = (config.contacts || []).filter(function (x) { return x.group === "First aid"; })[0];
     return c ? c.tel : "";
+  }
+  /* Name size, as a percentage of the card's width, shrinking for long names. */
+  function nameSize(name) { return name.length > 22 ? 5.2 : name.length > 16 ? 6.2 : 7.6; }
+
+  /* Sized in cqw, so it scales to whatever box it's put in. */
+  var FRONT_CSS =
+    ".c{position:relative;container-type:inline-size;aspect-ratio:" + ART_W + "/" + ART_H + ";overflow:hidden;background:#fff;color:#16333A}" +
+    ".c > img{position:absolute;inset:0;width:100%;height:100%;display:block}" +
+    ".c .nm,.c .cr{position:absolute;left:12%;right:12%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+    ".c .nm{top:9.5%;font-family:Fredoka,Arial,sans-serif;font-weight:600;line-height:1.2}" +
+    ".c .cr{top:17.5%;font-size:4.2cqw;color:#5F7A80;font-family:Arial,Helvetica,sans-serif}" +
+    ".c .qr{position:absolute;left:28%;width:44%;top:23.5%}.c .qr svg{width:100%;height:auto;display:block}" +
+    ".c .bc{position:absolute;left:15%;right:15%;top:57.5%;height:7%}.c .bc svg{width:100%;height:100%;display:block}" +
+    ".c .cd{position:absolute;left:10%;right:10%;top:65.5%;text-align:center;font-family:ui-monospace,Menlo,monospace;" +
+    "font-weight:700;font-size:4.8cqw;letter-spacing:.25em;color:#4A5F63}" +
+    ".c .fa{position:absolute;left:13%;width:50%;top:78%;font-family:Arial,Helvetica,sans-serif;font-weight:700;" +
+    "font-size:3.6cqw;line-height:1.3;color:#E4574B}.c .fa b{display:block;font-family:Fredoka,Arial,sans-serif;font-size:5.4cqw}" +
+    ".c.back > img{object-fit:cover}";
+
+  function frontHtml(m, origin) {
+    return '<div class="c"><img src="' + (origin || "") + FRONT + '" alt="">' +
+      '<div class="nm" style="font-size:' + nameSize(m.name) + 'cqw">' + esc(m.name) + "</div>" +
+      (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
+      '<div class="qr">' + qrSvg(m.code) + "</div>" +
+      '<div class="bc">' + barcodeSvg(m.code, 2, 40) + "</div>" +
+      '<div class="cd">' + esc(m.code) + "</div>" +
+      (firstAid() ? '<div class="fa">First aid<b>' + esc(firstAid()) + "</b></div>" : "") + "</div>";
   }
 
   function openCard(code) {
     var m = members.get(code);
     if (!m) return;
     ui.card = code;
-    $("lanyard").innerHTML =
-      '<div class="qr">' + qrSvg(m.code) + "</div>" +
-      '<div class="side"><div class="nm">' + esc(m.name) + "</div>" +
-      (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
-      '<div class="bc">' + barcodeSvg(m.code, 2, 34) + "</div>" +
-      '<div class="cd">' + esc(m.code) + "</div>" +
-      '<div class="ev">' + (firstAid() ? "First aid " + esc(firstAid()) : EVENT + " · " + DATES) + "</div></div>";
+    $("lanyard").innerHTML = "<style>" + FRONT_CSS + "</style>" + frontHtml(m);
     $("cardStatus").textContent = "";
     openModal("modal");
   }
 
+  function loaded(img) {
+    return img.complete && img.naturalWidth ? Promise.resolve() : new Promise(function (ok) {
+      img.onload = img.onerror = function () { ok(); };
+    });
+  }
+  function fitText(ctx, text, maxW) {
+    if (ctx.measureText(text).width <= maxW) return text;
+    while (text.length > 2 && ctx.measureText(text + "…").width > maxW) text = text.slice(0, -1);
+    return text.trim() + "…";
+  }
+
+  /* The front at the artwork's own resolution, laid out as frontHtml does. */
   async function cardPng(code) {
     var m = members.get(code);
     if (!m) return;
-    try { await document.fonts.load("600 64px Fredoka"); await document.fonts.load("500 30px Archivo"); } catch (e) {}
-    var W = 1016, H = 638, c = document.createElement("canvas");
+    try { await document.fonts.load("600 90px Fredoka"); } catch (e) {}
+    await loaded(frontImg);
+    var W = ART_W, H = ART_H, u = W / 100, c = document.createElement("canvas");
     c.width = W; c.height = H;
     var ctx = c.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#2BA8A0"; ctx.fillRect(0, 0, W, 14);
-    qrOnCanvas(ctx, m.code, 44, 150, 360);
-    ctx.textBaseline = "top"; ctx.fillStyle = "#16333A";
-    ctx.font = "600 60px Fredoka, Archivo, sans-serif";
-    var name = m.name, maxW = W - 480;
-    while (ctx.measureText(name).width > maxW && name.length > 4) name = name.slice(0, -2);
-    if (name !== m.name) name = name.trim() + "…";
-    ctx.fillText(name, 452, 132);
-    ctx.font = "500 30px Archivo, sans-serif"; ctx.fillStyle = "#5F7A80";
-    if (m.crew) ctx.fillText(m.crew, 452, 212);
-    var bc = barcodeCanvas(m.code, 3, 104);
-    if (bc) ctx.drawImage(bc, 452, 300, Math.min(bc.width, 500), 104);
-    ctx.font = "600 27px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#4A5F63";
-    if ("letterSpacing" in ctx) ctx.letterSpacing = "6px";
-    ctx.fillText(m.code, 452, 426);
+    if (frontImg.naturalWidth) ctx.drawImage(frontImg, 0, 0, W, H);
+    ctx.textBaseline = "top"; ctx.textAlign = "center";
+    ctx.fillStyle = "#16333A";
+    ctx.font = "600 " + Math.round(nameSize(m.name) * u) + "px Fredoka, Arial, sans-serif";
+    ctx.fillText(fitText(ctx, m.name, W * 0.76), W / 2, H * 0.095);
+    if (m.crew) {
+      ctx.font = Math.round(4.2 * u) + "px Arial, Helvetica, sans-serif"; ctx.fillStyle = "#5F7A80";
+      ctx.fillText(fitText(ctx, m.crew, W * 0.76), W / 2, H * 0.175);
+    }
+    qrOnCanvas(ctx, m.code, W * 0.28, H * 0.235, W * 0.44);
+    var bc = barcodeCanvas(m.code, 4, 120);
+    if (bc) ctx.drawImage(bc, W * 0.15, H * 0.575, W * 0.70, H * 0.07);
+    ctx.font = "700 " + Math.round(4.8 * u) + "px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#4A5F63";
+    if ("letterSpacing" in ctx) ctx.letterSpacing = Math.round(1.2 * u) + "px";
+    ctx.fillText(m.code, W / 2, H * 0.655);
     if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
-    ctx.font = "700 24px Archivo, sans-serif"; ctx.fillStyle = "#1B7F79";
-    ctx.fillText(EVENT + " · " + DATES, 452, 492);
-    if (firstAid()) { ctx.fillStyle = "#E4574B"; ctx.fillText("First aid " + firstAid(), 452, 530); }
-    if (logoImg.complete && logoImg.naturalWidth) ctx.drawImage(logoImg, W - 190, H - 190, 150, 150);
-    ctx.strokeStyle = "#DCE7E7"; ctx.lineWidth = 3; ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
+    if (firstAid()) {
+      ctx.textAlign = "left"; ctx.fillStyle = "#E4574B";
+      ctx.font = "700 " + Math.round(3.6 * u) + "px Arial, Helvetica, sans-serif";
+      ctx.fillText("First aid", W * 0.13, H * 0.78);
+      ctx.font = "600 " + Math.round(5.4 * u) + "px Fredoka, Arial, sans-serif";
+      ctx.fillText(firstAid(), W * 0.13, H * 0.78 + 4.8 * u);
+    }
     c.toBlob(function (blob) {
       if (!blob) { $("cardStatus").textContent = "The image couldn't be built."; return; }
       var slug = m.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || m.code;
@@ -635,66 +678,33 @@
     }, "image/png");
   }
 
-  /* The back of every card: the important numbers over the camp artwork. */
-  function backHtml() {
-    var groups = [], by = {};
-    (config.contacts || []).forEach(function (c) {
-      if (!by[c.group]) { by[c.group] = { name: c.group, urgent: c.urgent, lines: [] }; groups.push(by[c.group]); }
-      by[c.group].lines.push((c.name ? "<b>" + esc(c.name) + "</b> " : "") + esc(c.tel) + (c.alt ? " or " + esc(c.alt) : "") +
-        (c.note ? " <i>" + esc(c.note.toLowerCase()) + "</i>" : ""));
-    });
-    return '<div class="c back"><div class="panel"><div class="tt">Important numbers</div><div class="cols">' +
-      groups.map(function (g) {
-        return '<div class="g' + (g.urgent ? " urgent" : "") + '"><div class="gh">' + esc(g.name) + "</div>" +
-          g.lines.map(function (l) { return "<div>" + l + "</div>"; }).join("") + "</div>";
-      }).join("") + "</div></div></div>";
-  }
-
-  /* Cards come eight to an A4 page. Each page of fronts is followed by a page
-     of backs, so it prints double sided (flip on the long edge). Every back is
-     the same, so they line up whichever way the printer turns the sheet. */
+  /* Cards come nine to an A4 page, 60 × 85 mm. Each page of fronts is followed
+     by a page of backs, so it prints double sided (flip on the long edge).
+     Every back is the same, so they line up whichever way the printer turns
+     the sheet. */
   function sheetHtml() {
-    var PER = 8;
+    var PER = 9;
     var list = sortedMembers();
-    var back = (config.contacts || []).length ? backHtml() : "";
+    var origin = location.origin;
+    var back = '<div class="c back"><img src="' + origin + BACK + '" alt=""></div>';
     var pages = "";
     for (var i = 0; i < list.length; i += PER) {
-      pages += '<div class="page">' + list.slice(i, i + PER).map(function (m) {
-        return '<div class="c"><div class="nm">' + esc(m.name) + "</div>" +
-          (m.crew ? '<div class="cr">' + esc(m.crew) + "</div>" : "") +
-          '<div class="mid"><div class="qr">' + qrSvg(m.code) + "</div>" +
-          '<div class="rt"><div class="bc">' + barcodeSvg(m.code, 2, 30) + '</div><div class="cd">' + esc(m.code) +
-          '</div><div class="ev">' + EVENT + "</div>" +
-          (firstAid() ? '<div class="fa">First aid ' + esc(firstAid()) + "</div>" : "") + "</div></div></div>";
-      }).join("") + "</div>";
-      if (back) pages += '<div class="page">' + new Array(PER + 1).join(back) + "</div>";
+      /* A short last page is padded with empty slots so its fronts sit exactly
+         where the full page of backs will print. */
+      var fronts = list.slice(i, i + PER).map(function (m) { return frontHtml(m, origin); });
+      while (fronts.length < PER) fronts.push('<div class="c blank"></div>');
+      pages += '<div class="page">' + fronts.join("") + "</div>";
+      pages += '<div class="page">' + new Array(PER + 1).join(back) + "</div>";
     }
     return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + EVENT + ' — lanyard cards</title>' +
       '<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600;700&display=swap" rel="stylesheet"><style>' +
       "@page{size:A4;margin:0}" +
-      "*{-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
-      "body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#16333A;background:#fff}" +
-      ".page{width:210mm;height:297mm;display:grid;grid-template-columns:repeat(2,88mm);grid-auto-rows:54mm;gap:4mm;" +
-      "justify-content:center;align-content:center;break-after:page;box-sizing:border-box}" +
-      ".c{width:88mm;height:54mm;border:1px dashed #bbb;border-radius:3mm;padding:4mm;display:flex;flex-direction:column;" +
-      "box-sizing:border-box;overflow:hidden;background-image:url(" + location.origin + "/logo.png);" +
-      "background-repeat:no-repeat;background-position:right 3mm top 3mm;background-size:14mm 14mm}" +
-      ".nm{font-size:15pt;font-weight:700;line-height:1.1;max-width:66mm}" +
-      ".cr{font-size:8.5pt;color:#5F7A80;margin-top:1mm;max-width:66mm}" +
-      ".mid{display:flex;gap:4mm;align-items:flex-end;margin-top:auto}" +
-      ".qr{width:25mm;flex:0 0 25mm}.qr svg{width:100%;height:auto;display:block}" +
-      ".rt{flex:1 1 auto;min-width:0}.bc svg{width:100%;height:10mm}" +
-      ".cd{font-family:monospace;font-size:10.5pt;letter-spacing:.2em;margin-top:1mm;color:#4A5F63;font-weight:bold}" +
-      ".ev{font-size:7.5pt;color:#1B7F79;font-weight:bold;margin-top:.8mm}" +
-      ".fa{font-size:7.5pt;color:#E4574B;font-weight:bold}" +
-      ".back{padding:0;border-style:solid;border-color:#2BA8A0;background:#2BA8A0 url(" + location.origin + "/numbers.webp) center/cover no-repeat}" +
-      ".panel{margin:0 8.6mm;height:100%;background:#fff;padding:2.5mm 3mm;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}" +
-      ".tt{font-family:Fredoka,Arial,sans-serif;font-weight:700;font-size:13pt;text-align:center;text-decoration:underline;margin-bottom:2mm}" +
-      ".cols{columns:2;column-gap:3mm;font-size:8.6pt;line-height:1.3;color:#1B7F79;font-weight:bold}" +
-      ".g{break-inside:avoid;margin-bottom:2.2mm}" +
-      ".gh{font-family:Fredoka,Arial,sans-serif;font-size:8.4pt;letter-spacing:.04em;text-transform:uppercase;color:#000}" +
-      ".g b{color:#1B7F79}.g i{display:block;font-style:normal;font-weight:normal;font-size:7pt}" +
-      ".urgent,.urgent .gh{color:#E4574B}.urgent div:not(.gh){font-size:12pt;font-family:Fredoka,Arial,sans-serif}" +
+      "*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}" +
+      "body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#fff}" +
+      ".page{width:210mm;height:297mm;display:grid;grid-template-columns:repeat(3,60mm);grid-auto-rows:84.6mm;gap:4mm;" +
+      "justify-content:center;align-content:center;break-after:page}" +
+      FRONT_CSS +
+      ".c{width:60mm;outline:.2mm dashed #bbb}.c.blank{visibility:hidden}" +
       "@media screen{body{background:#eee}.page{background:#fff;margin:10mm auto;box-shadow:0 2px 10px rgba(0,0,0,.15)}}" +
       "@media print{.note{display:none}}" +
       '</style></head><body><p class="note" style="font-size:11pt;color:#555;text-align:center;margin:10mm 0 0">' +
