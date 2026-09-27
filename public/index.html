@@ -93,7 +93,6 @@ textarea{min-height:100px;resize:vertical}
 /* ---- scan ---- */
 .station{display:grid;gap:18px;grid-template-columns:1fr}
 @media(min-width:960px){.station{grid-template-columns:minmax(0,1.1fr) minmax(330px,.9fr);align-items:start}}
-.dests{display:flex;flex-wrap:wrap;gap:8px}
 .dest{
   font:inherit;text-align:left;cursor:pointer;padding:10px 14px;border-radius:14px;
   border:2px solid var(--line);background:#fff;color:var(--ink);flex:1 1 150px;max-width:100%;
@@ -105,7 +104,39 @@ textarea{min-height:100px;resize:vertical}
 .dest[aria-pressed="true"] small{color:rgba(255,255,255,.85)}
 .dest.off[aria-pressed="true"]{background:var(--orange);border-color:var(--orange)}
 .dest.home[aria-pressed="true"]{background:var(--ink);border-color:var(--ink)}
-#destMore{margin-top:10px}
+.fixed{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fixed .dest{padding:14px 16px}
+.fixed .dest b{font-size:17px}
+.pp-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:20px 0 10px}
+.pp-head h3{margin:0}
+.pp-head .day{padding:6px 11px;font-size:13px}
+.dlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+.dopt{font:inherit;text-align:left;cursor:pointer;display:grid;grid-template-columns:auto minmax(0,1fr);gap:1px 12px;align-items:center;
+  padding:10px 12px;border-radius:12px;border:2px solid var(--line);background:#fff;color:var(--ink)}
+.dopt .t{grid-row:span 2;font-weight:700;font-size:13.5px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:42px}
+.dopt b{font-size:14.5px;line-height:1.2}
+.dopt small{font-size:12px;color:var(--dim)}
+.dopt:hover{border-color:var(--teal)}
+.dopt.off{border-left:6px solid var(--orange)}
+.dopt.live{background:var(--teal-lt);border-color:var(--teal)}
+.dopt.live.off{border-left-color:var(--orange)}
+.dopt.past{opacity:.55}
+.dopt[aria-pressed="true"]{background:var(--teal);border-color:var(--teal);color:#fff;opacity:1}
+.dopt.off[aria-pressed="true"]{background:var(--orange);border-color:var(--orange)}
+.dopt[aria-pressed="true"] .t,.dopt[aria-pressed="true"] small{color:rgba(255,255,255,.88)}
+.linkbtn{font:inherit;grid-column:1/-1;justify-self:start;background:none;border:0;padding:4px 2px;cursor:pointer;
+  font-size:13.5px;font-weight:700;color:var(--teal-dk)}
+.going{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;margin:10px 0 12px;background:var(--teal);color:#fff}
+.going.off{background:var(--orange)}
+.going.home{background:var(--ink)}
+.going.none{background:var(--warn-bg);color:var(--warn);border:2px dashed #EFD49B}
+.going .gtxt{min-width:0;flex:1 1 auto}
+.going small{display:block;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.9}
+.going b{display:block;font-family:"Fredoka",sans-serif;font-size:21px;font-weight:600;line-height:1.15}
+.going .gnote{display:block;font-size:13px;opacity:.92;margin-top:1px}
+.going .btn{flex:0 0 auto;background:rgba(255,255,255,.2);border-color:transparent;color:inherit}
+.going.none .btn{background:#fff;border-color:#EFD49B}
+@media(max-width:600px){.fixed .dest{padding:12px}.fixed .dest b{font-size:16px}.dlist{grid-template-columns:1fr}}
 .scanrow{display:flex;gap:10px;margin-top:4px}
 .scanrow input{flex:1 1 auto;min-width:0}
 #scan{font-size:20px;font-weight:600;padding:16px;border-color:var(--teal)}
@@ -137,6 +168,7 @@ textarea{min-height:100px;resize:vertical}
   .result .when{font-size:12.5px;margin-top:2px;flex:1 1 auto}
   .result #undoBtn{margin-top:6px}
 }
+@media(min-width:960px){#scanCard + .result{margin-top:18px}}
 .result.flash{animation:pop .25s ease-out}
 @keyframes pop{from{transform:scale(.97);opacity:.5}to{transform:none;opacity:1}}
 @media(prefers-reduced-motion:reduce){.result.flash{animation:none}}
@@ -281,23 +313,29 @@ details summary{cursor:pointer;font-size:14px;font-weight:700;color:var(--teal-d
     <!-- SCAN -->
     <section class="view" id="view-station">
       <div class="station">
-        <div class="card">
+        <div class="card" id="destCard">
           <h2>Where are they going?</h2>
-          <p class="lead">Pick a place, then scan everyone heading there.</p>
-          <div class="dests" id="dests"></div>
-          <select id="destMore" aria-label="Another activity"></select>
-
-          <h2 style="margin-top:22px">Scan a lanyard</h2>
-          <div class="scanrow">
-            <input id="scan" type="text" autocomplete="off" spellcheck="false" placeholder="Scan, or type a code or name">
-            <button class="btn teal" type="button" id="camBtn">Camera</button>
+          <p class="lead">Pick a place once. Everyone you scan goes there until you pick another.</p>
+          <div class="fixed" id="destFixed"></div>
+          <div class="pp-head">
+            <h3>Or an activity</h3>
+            <div class="days" id="destDays"></div>
           </div>
-          <div class="people" id="findResults"></div>
-          <div class="videowrap" id="camWrap" hidden><video id="video" playsinline muted></video><div class="reticle"></div></div>
-          <p class="ready" id="scanHint">A USB scanner types the code and presses enter for you.</p>
+          <div class="dlist" id="destList"></div>
         </div>
 
         <div>
+          <div class="card" id="scanCard">
+            <h2>Scan a lanyard</h2>
+            <div class="going none" id="going"></div>
+            <div class="scanrow">
+              <input id="scan" type="text" autocomplete="off" spellcheck="false" placeholder="Scan, or type a code or name">
+              <button class="btn teal" type="button" id="camBtn">Camera</button>
+            </div>
+            <div class="people" id="findResults"></div>
+            <div class="videowrap" id="camWrap" hidden><video id="video" playsinline muted></video><div class="reticle"></div></div>
+            <p class="ready" id="scanHint">A USB scanner types the code and presses enter for you.</p>
+          </div>
           <div class="result idle" id="result">
             <div class="who" id="resWho">Ready</div>
             <div class="what" id="resWhat">Pick where they're going, then scan.</div>

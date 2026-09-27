@@ -2,8 +2,8 @@
    Talks to the Worker API in src/index.js.
 
    One idea runs through the whole thing: everyone is somewhere. Either they're
-   on site, or they're at one of the programme's activities, or they've gone
-   home. A scan moves them to the place the board has selected — there is no
+   on site, or they're at one of the programme's activities, or they've
+   signed out of camp. A scan moves them to the place the board has selected — there is no
    separate sign out / sign in to fall out of step. */
 (function () {
   "use strict";
@@ -28,21 +28,20 @@
   } catch (e) {}
 
   /* The two places that are always offered, whether or not anything is on the
-     programme. Everything else is a real activity. */
+     programme. Everything else is a real activity. `name` is the button,
+     `label` is how someone who is there reads on the board. The id stays 'home'
+     so databases from before the rename keep working. */
   var FIXED = [
-    { id: "onsite", name: "On site", note: "Here at camp" },
-    { id: "home", name: "Going home", note: "Leaving camp" }
+    { id: "onsite", name: "On site", label: "On site", note: "Here at camp" },
+    { id: "home", name: "Signing out", label: "Signed out", note: "Leaving camp" }
   ];
-  /* How many upcoming activities get their own button on the scan screen. The
-     rest are one tap away in the dropdown under them. */
-  var SUGGESTED = 5;
 
   var members = new Map();
   var activities = new Map();
   var movements = [];
   var config = { pinRequired: false, contacts: [] };
   var rev = null;
-  var ui = { view: "station", dest: null, recent: [], day: null, card: null, act: null, mem: null };
+  var ui = { view: "station", dest: null, pickDay: null, showPast: false, recent: [], day: null, card: null, act: null, mem: null };
   var lastScan = { code: null, place: null, at: 0 };
   var undoable = null;
 
@@ -116,7 +115,7 @@
   }
   function placeLabel(id) {
     var f = fixedPlace(id);
-    if (f) return f.name;
+    if (f) return f.label;
     var a = activities.get(id);
     return a ? a.name : "On site";
   }
@@ -263,7 +262,7 @@
       var kind = whereKind(m.place);
       showResult(kind === "onsite" ? "in" : kind === "home" ? "home" : "out",
         m.name,
-        m.place === "onsite" ? "On site" : m.place === "home" ? "Gone home" : "At " + placeLabel(m.place),
+        m.place === "onsite" ? "On site" : m.place === "home" ? "Signed out" : "At " + placeLabel(m.place),
         clock(res.at) + " · was " + placeLabel(res.prev.place) + (res.prev.since ? " for " + since(res.prev.since) : ""));
       setUndo({ code: m.code, prev: res.prev });
       ui.recent.unshift({ name: m.name, where: placeLabel(m.place), kind: kind, t: res.at });
@@ -367,52 +366,81 @@
     $("tally").innerHTML =
       "<div><b>" + (all.length - off.length - home.length) + "</b><small>on site</small></div>" +
       "<div><b>" + off.length + "</b><small>off site</small></div>" +
-      (home.length ? "<div><b>" + home.length + "</b><small>gone home</small></div>" : "") +
+      (home.length ? "<div><b>" + home.length + "</b><small>signed out</small></div>" : "") +
       (late.length ? '<div class="hot"><b>' + late.length + "</b><small>due back</small></div>" : "");
   }
 
-  /* The scan screen offers On site, Going home, and whatever is on now or up
-     next. Everything else on the programme is in the dropdown. */
+  /* The scan screen: the two fixed places as big buttons, then one day of the
+     programme at a time as a list to tap. What's picked is repeated right
+     above the scan box, so nobody has to scroll back up to check. */
   function destButton(id, name, note, cls) {
     return '<button class="dest ' + cls + '" type="button" data-dest="' + esc(id) + '" aria-pressed="' +
       (ui.dest === id) + '"><b>' + esc(name) + "</b><small>" + esc(note) + "</small></button>";
   }
+  function destOption(a, now) {
+    var s = stamp(a.date, a.start) || 0, e = endStamp(a) || 0;
+    var running = s <= now && now < e, done = now >= e;
+    var n = countAt(a.id);
+    var note = (running ? "On now · till " : "till ") + a.end + (a.site === "off" ? " · off site" : "") + (n ? " · " + n + " there" : "");
+    return '<button type="button" class="dopt' + (a.site === "off" ? " off" : "") + (running ? " live" : done ? " past" : "") +
+      '" data-dest="' + esc(a.id) + '" aria-pressed="' + (ui.dest === a.id) + '"><span class="t">' + esc(a.start) +
+      "</span><b>" + esc(a.name) + "</b><small>" + esc(note) + "</small></button>";
+  }
   function renderDests() {
-    var all = sortedActivities();
-    var now = Date.now();
-    var picks = all.filter(function (a) { return a.dest && (endStamp(a) || 0) > now; }).slice(0, SUGGESTED);
-    var chosen = activities.get(ui.dest);
-    if (chosen && picks.indexOf(chosen) < 0) picks.push(chosen);
+    var now = Date.now(), today = todayISO();
+    $("destFixed").innerHTML = FIXED.map(function (f) {
+      return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here");
+    }).join("");
 
-    $("dests").innerHTML =
-      FIXED.map(function (f) { return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here"); }).join("") +
-      picks.map(function (a) {
-        var running = (stamp(a.date, a.start) || 0) <= now && (endStamp(a) || 0) > now;
-        var note = (running ? "On now · until " + a.end : whenLabel(a)) + (a.site === "off" ? " · off site" : "");
-        return destButton(a.id, a.name, note, a.site === "off" ? "off" : "on");
-      }).join("");
-
-    var days = new Map();
-    all.forEach(function (a) {
-      if (!days.has(a.date)) days.set(a.date, []);
-      days.get(a.date).push(a);
-    });
-    var html = '<option value="">' + (all.length ? "Another activity…" : "Nothing on the programme yet") + "</option>";
-    days.forEach(function (list, d) {
-      html += '<optgroup label="' + esc(dayLabel(d)) + '">' + list.map(function (a) {
-        return '<option value="' + esc(a.id) + '">' + esc(a.start + "  " + a.name) + (a.site === "off" ? " (off site)" : "") + "</option>";
-      }).join("") + "</optgroup>";
-    });
-    /* Rebuilding an open dropdown would snap it shut under someone's finger. */
-    if (document.activeElement !== $("destMore")) {
-      $("destMore").innerHTML = html;
-      $("destMore").disabled = !all.length;
+    var acts = sortedActivities().filter(function (a) { return a.dest || a.id === ui.dest; });
+    var days = [];
+    acts.forEach(function (a) { if (days.indexOf(a.date) < 0) days.push(a.date); });
+    if (!ui.pickDay || days.indexOf(ui.pickDay) < 0) {
+      ui.showPast = false;
+      ui.pickDay = days.indexOf(today) >= 0 ? today
+        : days.filter(function (d) { return acts.some(function (a) { return a.date === d && (endStamp(a) || 0) > now; }); })[0]
+          || days[days.length - 1] || null;
     }
+    $("destDays").innerHTML = days.length > 1 ? days.map(function (d) {
+      return '<button class="day" type="button" data-pday="' + d + '" aria-pressed="' + (d === ui.pickDay) + '">' +
+        esc(d === today ? "Today" : dayLabel(d, "short")) + "</button>";
+    }).join("") : "";
+
+    /* Finished activities fold away so what's on now is at the top. */
+    var list = acts.filter(function (a) { return a.date === ui.pickDay; });
+    var past = list.filter(function (a) { return (endStamp(a) || 0) <= now && a.id !== ui.dest; });
+    var shown = ui.showPast ? list : list.filter(function (a) { return past.indexOf(a) < 0; });
+    var html = past.length ? '<button class="linkbtn" type="button" data-past>' +
+      (ui.showPast ? "Hide the " + past.length + " finished" : "Show " + past.length + " finished earlier") + "</button>" : "";
+    html += shown.map(function (a) { return destOption(a, now); }).join("");
+    $("destList").innerHTML = html || '<div class="empty" style="grid-column:1/-1">' +
+      (acts.length ? "Nothing left on this day." : "Nothing on the programme yet.") + "</div>";
+    renderGoing();
+  }
+  function renderGoing() {
+    var el = $("going"), id = ui.dest;
+    if (!id) {
+      el.className = "going none";
+      el.innerHTML = '<div class="gtxt"><b>Pick where they\'re going</b><span class="gnote">Scans won\'t move anyone until you do.</span></div>' +
+        '<button class="btn small" type="button" data-change>Pick</button>';
+      return;
+    }
+    var f = fixedPlace(id), a = activities.get(id), now = Date.now();
+    var note;
+    if (f) note = f.note;
+    else {
+      var running = (stamp(a.date, a.start) || 0) <= now && now < (endStamp(a) || 0);
+      note = (running ? "On now · until " + a.end : whenLabel(a)) + " · " + (a.site === "off" ? "off site" : "on site") + (a.loc ? " · " + a.loc : "");
+    }
+    el.className = "going " + (id === "home" ? "home" : a && a.site === "off" ? "off" : "here");
+    el.innerHTML = '<div class="gtxt"><small>' + (id === "home" ? "Each scan signs them out" : "Each scan moves them to") + "</small><b>" +
+      esc(f ? f.name : a.name) + '</b><span class="gnote">' + esc(note) + "</span></div>" +
+      '<button class="btn small" type="button" data-change>Change</button>';
   }
   function renderRecent() {
     $("recent").innerHTML = ui.recent.length ? ui.recent.map(function (r) {
       return "<li><b>" + esc(r.name) + "</b> <span>" +
-        (r.kind === "home" ? "gone home" : esc(r.where)) + " · " + clock(r.t) + "</span></li>";
+        (r.kind === "home" ? "signed out" : esc(r.where)) + " · " + clock(r.t) + "</span></li>";
     }).join("") : '<li style="color:var(--dim)">Scans show up here.</li>';
   }
   function personHtml(m) {
@@ -427,7 +455,7 @@
       '<div class="stat"><b>' + (all.length - off.length - home.length) + "</b><small>on site</small></div>" +
       '<div class="stat pink"><b>' + off.length + "</b><small>off site</small></div>" +
       '<div class="stat' + (late.length ? " warn" : "") + '"><b>' + late.length + "</b><small>past return time</small></div>" +
-      '<div class="stat"><b>' + home.length + "</b><small>gone home</small></div>";
+      '<div class="stat"><b>' + home.length + "</b><small>signed out</small></div>";
 
     var q = ($("boardSearch").value || "").trim().toLowerCase();
     function match(m) { return !q || (m.name + " " + (m.crew || "") + " " + m.code).toLowerCase().indexOf(q) >= 0; }
@@ -440,7 +468,7 @@
     });
     function groupHtml(place, people) {
       var a = activities.get(place);
-      var kindNote = place === "home" ? "gone home" : a ? (a.site === "off" ? "off site" : "on site") + " · until " + a.end : "on site";
+      var kindNote = place === "home" ? "left camp" : a ? (a.site === "off" ? "off site" : "on site") + " · until " + a.end : "on site";
       return '<div class="group' + (a && a.site === "off" ? " away" : "") + '"><div class="group-head"><h3>' +
         esc(placeLabel(place)) + "</h3><em>" + people.length + " · " + esc(kindNote) + '</em></div><div class="people">' +
         people.sort(function (x, y) { return x.name.localeCompare(y.name); }).map(personHtml).join("") + "</div></div>";
@@ -457,8 +485,8 @@
     $("feed").innerHTML = movements.length ? movements.map(function (e) {
       var k = whereKind(e.place);
       return "<li><time>" + clock(e.t) + '</time><span class="pill ' + k + '">' +
-        (k === "home" ? "home" : k === "off" ? "off" : "on") + "</span><span><b>" + esc(e.name || e.code) + "</b> " +
-        (e.place === "home" ? "went home" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
+        (k === "home" ? "out" : k === "off" ? "off" : "on") + "</span><span><b>" + esc(e.name || e.code) + "</b> " +
+        (e.place === "home" ? "signed out" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
         "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">No movements recorded yet.</li>';
   }
@@ -705,19 +733,25 @@
     });
   });
 
+  /* Picking a place keeps it picked — tapping it again doesn't clear it, so a
+     stray second tap can't leave the desk scanning to nowhere. On a phone the
+     page then scrolls down to the scan box and camera. */
   function chooseDest(id) {
     ui.dest = id;
     lastScan = { code: null, place: null, at: 0 };
     renderDests();
+    if (TOUCH) $("scanCard").scrollIntoView({ behavior: "smooth", block: "start" });
     focusScan();
   }
-  $("dests").addEventListener("click", function (e) {
+  $("destCard").addEventListener("click", function (e) {
     var b = e.target.closest("[data-dest]");
-    if (b) chooseDest(b.dataset.dest === ui.dest ? null : b.dataset.dest);
+    if (b) return chooseDest(b.dataset.dest);
+    var d = e.target.closest("[data-pday]");
+    if (d) { ui.pickDay = d.dataset.pday; ui.showPast = false; return renderDests(); }
+    if (e.target.closest("[data-past]")) { ui.showPast = !ui.showPast; renderDests(); }
   });
-  $("destMore").addEventListener("change", function () {
-    if (this.value) chooseDest(this.value);
-    this.value = "";
+  $("going").addEventListener("click", function (e) {
+    if (e.target.closest("[data-change]")) $("destCard").scrollIntoView({ behavior: "smooth", block: "start" });
   });
 
   $("scan").addEventListener("keydown", function (e) {
