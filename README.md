@@ -20,7 +20,7 @@ push.
   or add your own.
 - **People** — everyone gets a six character code as a QR code *and* a barcode.
   Printable card sheet (important numbers on the back), phone image, or their
-  own web page with their barcode, the whole programme and the numbers to call.
+  own web page with their barcode and the numbers to call.
 
 ---
 
@@ -104,8 +104,11 @@ not for the camp.
 
 1. **People** → **Paste a whole list** (`Name, Crew` per line) → **Download
    lanyard cards** → print double sided (flip on the long edge) at 100% and cut.
-   88 × 54 mm, fits a standard lanyard pouch. Every card back carries the
-   important numbers — change them in `CONTACTS` at the top of `src/index.js`.
+   Portrait, 60 × 85 mm, nine to a page, printed over the camp artwork. The
+   back is the important numbers sheet (`public/card-back.webp`) — if a number
+   changes, replace that image as well as `CONTACTS` at the top of
+   `src/index.js` (which feeds everyone's own page and the first aid line on
+   the front).
 
    ```
    Alex Moreno, Aurora Rover Unit
@@ -115,8 +118,8 @@ not for the camp.
 
 2. Send each person `https://your-site/p/THEIRCODE` (**Card** → **Copy their
    link**). Their page shows their barcode and code (for a USB scanner, or to
-   type in) and the programme, with what's on now at the top. The printed
-   lanyard still has the QR code for the camera.
+   type in) and the numbers to call. The printed lanyard still has the QR code
+   for the camera.
 3. On the **Scan** tab: pick where they're going, scan, repeat. A $30 USB barcode scanner
    is the most reliable option — it just types the code and presses enter. The
    camera and the search-by-name fallback both work too.
@@ -155,7 +158,8 @@ npm run dev          # http://localhost:8787
 ```
 public/index.html   the board (markup + styles)
 public/app.js       all the front end logic
-public/numbers.webp the important numbers artwork used on the card backs
+public/card-front.webp  the frame artwork behind the front of every lanyard card
+public/card-back.webp   the important numbers artwork on the back
 public/vendor/      QR generator, QR scanner, barcode generator
 src/index.js        the Worker: API, person pages, static assets
 schema.sql          database tables and the four day programme
