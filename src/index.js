@@ -157,7 +157,7 @@ async function handleApi(request, env, url) {
   }
 
   /* A scan just moves someone to the place the board has selected: 'onsite',
-     'home', or an activity id. There is no in/out flag to get out of step. */
+     'offsite' (a temporary sign out), 'home', or an activity id. There is no in/out flag to get out of step. */
   if (path === "scan" && method === "POST") {
     const { code, place } = await request.json();
     const where = String(place || "").trim();
@@ -165,7 +165,7 @@ async function handleApi(request, env, url) {
     const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?")
       .bind(String(code || "").toUpperCase()).first();
     if (!member) return bad("unknown-code", 404);
-    if (where !== "onsite" && where !== "home") {
+    if (where !== "onsite" && where !== "offsite" && where !== "home") {
       const act = await env.DB.prepare("SELECT id FROM activities WHERE id = ?").bind(where).first();
       if (!act) return bad("unknown-place", 404);
     }
