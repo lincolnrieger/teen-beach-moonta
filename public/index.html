@@ -104,7 +104,7 @@ textarea{min-height:100px;resize:vertical}
 .dest[aria-pressed="true"] small{color:rgba(255,255,255,.85)}
 .dest.off[aria-pressed="true"]{background:var(--orange);border-color:var(--orange)}
 .dest.home[aria-pressed="true"]{background:var(--ink);border-color:var(--ink)}
-.fixed{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fixed{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .fixed .dest{padding:14px 16px}
 .fixed .dest b{font-size:17px}
 .pp-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:20px 0 10px}
@@ -136,7 +136,7 @@ textarea{min-height:100px;resize:vertical}
 .going .gnote{display:block;font-size:13px;opacity:.92;margin-top:1px}
 .going .btn{flex:0 0 auto;background:rgba(255,255,255,.2);border-color:transparent;color:inherit}
 .going.none .btn{background:#fff;border-color:#EFD49B}
-@media(max-width:600px){.fixed .dest{padding:12px}.fixed .dest b{font-size:16px}.dlist{grid-template-columns:1fr}}
+@media(max-width:600px){.fixed{gap:8px}.fixed .dest{padding:10px}.fixed .dest b{font-size:15px}.fixed .dest small{font-size:11px}.dlist{grid-template-columns:1fr}}
 .scanrow{display:flex;gap:10px;margin-top:4px}
 .scanrow input{flex:1 1 auto;min-width:0}
 #scan{font-size:20px;font-weight:600;padding:16px;border-color:var(--teal)}

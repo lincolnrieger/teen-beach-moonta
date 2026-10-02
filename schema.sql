@@ -10,8 +10,8 @@ DROP TABLE IF EXISTS movements;
 DROP TABLE IF EXISTS activities;
 DROP TABLE IF EXISTS meta;
 
--- Everyone at camp. `place` is where they are right now: 'onsite', 'home',
--- or the id of an activity. There is no separate in/out flag — a scan just
+-- Everyone at camp. `place` is where they are right now: 'onsite',
+-- 'offsite' (temporarily away, coming back), 'home', or the id of an activity. There is no separate in/out flag — a scan just
 -- moves someone to the place the desk has selected.
 CREATE TABLE members (
   code    TEXT PRIMARY KEY,

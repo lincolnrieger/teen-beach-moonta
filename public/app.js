@@ -26,12 +26,15 @@
     TOUCH = window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(pointer: fine)").matches;
   } catch (e) {}
 
-  /* The two places that are always offered, whether or not anything is on the
+  /* The three places that are always offered, whether or not anything is on the
      programme. Everything else is a real activity. `name` is the button,
-     `label` is how someone who is there reads on the board. The id stays 'home'
-     so databases from before the rename keep working. */
+     `label` is how someone who is there reads on the board. 'offsite' is a
+     temporary sign out — away from camp for a bit, not on a programme
+     activity, and coming back. The id stays 'home' for signing out so
+     databases from before the rename keep working. */
   var FIXED = [
     { id: "onsite", name: "On site", label: "On site", note: "Here at camp" },
+    { id: "offsite", name: "Off site", label: "Off site", note: "Out for a bit, coming back" },
     { id: "home", name: "Signing out", label: "Signed out", note: "Leaving camp" }
   ];
 
@@ -121,6 +124,7 @@
   /* 'onsite' | 'off' | 'home' — where someone counts as being. */
   function whereKind(id) {
     if (id === "home") return "home";
+    if (id === "offsite") return "off";
     var a = activities.get(id);
     if (a) return a.site === "off" ? "off" : "onsite";
     return "onsite";
@@ -261,7 +265,7 @@
       var kind = whereKind(m.place);
       showResult(kind === "onsite" ? "in" : kind === "home" ? "home" : "out",
         m.name,
-        m.place === "onsite" ? "On site" : m.place === "home" ? "Signed out" : "At " + placeLabel(m.place),
+        fixedPlace(m.place) ? placeLabel(m.place) : "At " + placeLabel(m.place),
         clock(res.at) + " · was " + placeLabel(res.prev.place) + (res.prev.since ? " for " + since(res.prev.since) : ""));
       setUndo({ code: m.code, prev: res.prev });
       ui.recent.unshift({ name: m.name, where: placeLabel(m.place), kind: kind, t: res.at });
@@ -369,7 +373,7 @@
       (late.length ? '<div class="hot"><b>' + late.length + "</b><small>due back</small></div>" : "");
   }
 
-  /* The scan screen: the two fixed places as big buttons, then one day of the
+  /* The scan screen: the three fixed places as big buttons, then one day of the
      programme at a time as a list to tap. What's picked is repeated right
      above the scan box, so nobody has to scroll back up to check. */
   function destButton(id, name, note, cls) {
@@ -388,7 +392,7 @@
   function renderDests() {
     var now = Date.now(), today = todayISO();
     $("destFixed").innerHTML = FIXED.map(function (f) {
-      return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : "here");
+      return destButton(f.id, f.name, f.note, f.id === "home" ? "home" : f.id === "offsite" ? "off" : "here");
     }).join("");
 
     var acts = sortedActivities().filter(function (a) { return a.dest || a.id === ui.dest; });
@@ -431,8 +435,8 @@
       var running = (stamp(a.date, a.start) || 0) <= now && now < (endStamp(a) || 0);
       note = (running ? "On now · until " + a.end : whenLabel(a)) + " · " + (a.site === "off" ? "off site" : "on site") + (a.loc ? " · " + a.loc : "");
     }
-    el.className = "going " + (id === "home" ? "home" : a && a.site === "off" ? "off" : "here");
-    el.innerHTML = '<div class="gtxt"><small>' + (id === "home" ? "Each scan signs them out" : "Each scan moves them to") + "</small><b>" +
+    el.className = "going " + (id === "home" ? "home" : whereKind(id) === "off" ? "off" : "here");
+    el.innerHTML = '<div class="gtxt"><small>' + (id === "home" ? "Each scan signs them out" : id === "offsite" ? "Each scan signs them out for a bit" : "Each scan moves them to") + "</small><b>" +
       esc(f ? f.name : a.name) + '</b><span class="gnote">' + esc(note) + "</span></div>" +
       '<button class="btn small" type="button" data-change>Change</button>';
   }
@@ -467,13 +471,13 @@
     });
     function groupHtml(place, people) {
       var a = activities.get(place);
-      var kindNote = place === "home" ? "left camp" : a ? (a.site === "off" ? "off site" : "on site") + " · until " + a.end : "on site";
-      return '<div class="group' + (a && a.site === "off" ? " away" : "") + '"><div class="group-head"><h3>' +
+      var kindNote = place === "home" ? "left camp" : place === "offsite" ? "out for a bit" : a ? (a.site === "off" ? "off site" : "on site") + " · until " + a.end : "on site";
+      return '<div class="group' + (whereKind(place) === "off" ? " away" : "") + '"><div class="group-head"><h3>' +
         esc(placeLabel(place)) + "</h3><em>" + people.length + " · " + esc(kindNote) + '</em></div><div class="people">' +
         people.sort(function (x, y) { return x.name.localeCompare(y.name); }).map(personHtml).join("") + "</div></div>";
     }
     var order = Array.from(groups.keys()).sort(function (a, b) {
-      var rank = function (p) { return p === "onsite" ? 1 : p === "home" ? 2 : 0; };
+      var rank = function (p) { return p === "onsite" ? 1 : p === "offsite" ? 2 : p === "home" ? 3 : 0; };
       return rank(a) - rank(b) || placeLabel(a).localeCompare(placeLabel(b));
     });
     var html = order.map(function (p) { return groupHtml(p, groups.get(p)); }).join("");
@@ -485,7 +489,7 @@
       var k = whereKind(e.place);
       return "<li><time>" + clock(e.t) + '</time><span class="pill ' + k + '">' +
         (k === "home" ? "out" : k === "off" ? "off" : "on") + "</span><span><b>" + esc(e.name || e.code) + "</b> " +
-        (e.place === "home" ? "signed out" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
+        (e.place === "home" ? "signed out" : e.place === "offsite" ? "went off site for a bit" : e.place === "onsite" ? "came back on site" : "moved to " + esc(placeLabel(e.place))) +
         "</span></li>";
     }).join("") : '<li style="border:0;color:var(--dim)">No movements recorded yet.</li>';
   }

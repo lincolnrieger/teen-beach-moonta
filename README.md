@@ -8,8 +8,9 @@ there's no separate sign out and sign in to fall out of step with each other.
 Runs on Cloudflare Workers with a D1 database and deploys from GitHub on every
 push.
 
-- **Scan** — pick where they're going, scan a lanyard, done. **On site** and
-  **Signing out** are the two big buttons; under them is one day of the
+- **Scan** — pick where they're going, scan a lanyard, done. **On site**,
+  **Off site** (a temporary sign out — out for a bit, coming back) and
+  **Signing out** are the three big buttons; under them is one day of the
   programme at a time (finished activities fold away). Whatever's picked is
   shown right above the scan box. The one box takes a scanner, a typed code or
   a typed name.
