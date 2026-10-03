@@ -159,6 +159,20 @@
     return n;
   }
 
+  /* Everyone's own page is at their name (/ethan-miotti). Two people with the
+     same name get their code on the end. Same rules as slugify in src/index.js. */
+  function slugify(name) {
+    return String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+  function personSlug(code) {
+    var m = members.get(code);
+    var s = m ? slugify(m.name) : "";
+    var twins = 0;
+    if (s) members.forEach(function (o) { if (slugify(o.name) === s) twins++; });
+    return s && twins === 1 ? s : (s ? s + "-" : "") + code.toLowerCase();
+  }
+
   /* ---------------- QR + barcode ---------------- */
   function qrSvg(text) {
     var q = qrcode(0, "M"); q.addData(text); q.make();
@@ -906,7 +920,7 @@
   $("cardPng").addEventListener("click", function () { if (ui.card) cardPng(ui.card); });
   $("cardLink").addEventListener("click", function () {
     if (!ui.card) return;
-    var link = location.origin + "/p/" + ui.card;
+    var link = location.origin + "/" + personSlug(ui.card);
     if (navigator.clipboard) navigator.clipboard.writeText(link).catch(function () {});
     $("cardStatus").innerHTML = 'Copied: <a href="' + esc(link) + '" target="_blank" rel="noopener">' + esc(link) + "</a>";
   });

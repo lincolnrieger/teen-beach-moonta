@@ -3,13 +3,13 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 const bad = (message, status = 400) => json({ error: message }, status);
 
-/* Staff routes need the shared PIN. Set it with:
-   npx wrangler secret put STAFF_PIN
-   If it is not set, the whole site is open — fine for a trial, not for the camp. */
+/* Staff routes need the shared PIN. It is 1907 unless a different one is set
+   as a secret with `npx wrangler secret put STAFF_PIN`, which wins. */
+const DEFAULT_PIN = "1907";
+const staffPin = (env) => env.STAFF_PIN || DEFAULT_PIN;
 function staffOk(request, env) {
-  if (!env.STAFF_PIN) return true;
   const sent = request.headers.get("x-pin") || "";
-  return sent === env.STAFF_PIN;
+  return sent === staffPin(env);
 }
 
 async function bumpRev(env) {
@@ -123,7 +123,7 @@ async function handleApi(request, env, url) {
   /* --- public: what this deployment can do --- */
   if (path === "config") {
     return json({
-      pinRequired: Boolean(env.STAFF_PIN),
+      pinRequired: true,
       event: env.EVENT_NAME || "Teen Beach Moonta",
       contacts: CONTACTS
     });
@@ -284,6 +284,22 @@ async function handleApi(request, env, url) {
   return bad("Unknown endpoint.", 404);
 }
 
+/* Everyone's own page lives at their name, e.g. /ethan-miotti. Two people with
+   the same name get their code on the end (/sam-smith-ac3f7q) so neither link
+   is ambiguous. app.js builds the links with the same rules. */
+function slugify(name) {
+  return String(name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+async function memberBySlug(slug, env) {
+  await ensureSchema(env);
+  const all = (await env.DB.prepare("SELECT * FROM members").all()).results || [];
+  const named = all.filter((m) => slugify(m.name) === slug);
+  if (named.length === 1) return named[0];
+  return all.find((m) => (slugify(m.name) ? slugify(m.name) + "-" : "") + m.code.toLowerCase() === slug) || null;
+}
+
 /* The important numbers as a list of tap-to-call rows. */
 function contactsHtml() {
   const telHref = (t) => "tel:" + t.replace(/\s+/g, "");
@@ -303,11 +319,10 @@ function contactsHtml() {
   return html + (last !== null ? "</div>" : "");
 }
 
-/* A plain page for one person: their code as a barcode, and the numbers to
-   call. Send them https://your-site/p/THEIRCODE to keep on their phone. */
-async function personPage(code, env) {
-  await ensureSchema(env);
-  const member = await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code.toUpperCase()).first();
+/* A plain page for one person: their code as a QR code and a barcode, and the
+   numbers to call. Send them https://your-site/their-name to keep on their
+   phone (the older https://your-site/p/THEIRCODE still works). */
+async function personPage(member, env) {
   const event = env.EVENT_NAME || "Teen Beach Moonta";
   const head = `<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <meta name=theme-color content="#2BA8A0">
@@ -322,7 +337,9 @@ async function personPage(code, env) {
  .logo{width:84px;height:84px;border-radius:50%;margin-top:-4px}
  h1{font-family:Fredoka,sans-serif;font-weight:600;font-size:28px;line-height:1.1;margin:10px 0 2px}
  .crew{color:#5F7A80;font-size:15px}
- .bc{max-width:280px;margin:18px auto 0}
+ .qr{width:220px;max-width:100%;margin:18px auto 0}
+ .qr svg{width:100%;height:auto;display:block}
+ .bc{max-width:280px;margin:14px auto 0}
  .bc svg{width:100%;height:64px;display:block}
  .code{font-family:ui-monospace,Menlo,monospace;font-size:20px;letter-spacing:.24em;font-weight:700;margin-top:8px}
  h2{font-family:Fredoka,sans-serif;font-weight:700;font-size:22px;margin:0 0 6px}
@@ -352,6 +369,7 @@ async function personPage(code, env) {
   <img class=logo src="/logo.png" alt="${esc(event)}">
   <h1>${esc(member.name)}</h1>
   <div class=crew>${esc(member.crew || event)}</div>
+  <div class=qr id=qr></div>
   <div class=bc id=bc></div>
   <div class=code>${esc(member.code)}</div>
  </div>
@@ -360,9 +378,17 @@ async function personPage(code, env) {
   ${contactsHtml()}
  </div>
 </main>
+<script src="/vendor/qrcode.js"></script>
 <script src="/vendor/JsBarcode.all.min.js"></script>
 <script>
  var CODE = ${JSON.stringify(member.code)};
+ try {
+   var q = qrcode(0, "M"); q.addData(CODE); q.make();
+   var n = q.getModuleCount(), t = n + 4, d = "";
+   for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (c + 2) + " " + (r + 2) + "h1v1h-1z";
+   document.getElementById("qr").innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + t + " " + t +
+     '" shape-rendering="crispEdges"><rect width="' + t + '" height="' + t + '" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+ } catch (e) {}
  try {
    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
    JsBarcode(svg, CODE, { format: "CODE128", width: 3, height: 64, displayValue: false, margin: 0, background: "#ffffff" });
@@ -380,7 +406,17 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith("/api/")) return await handleApi(request, env, url);
-      if (url.pathname.startsWith("/p/")) return await personPage(url.pathname.slice(3), env);
+      if (url.pathname.startsWith("/p/")) {
+        await ensureSchema(env);
+        const code = url.pathname.slice(3).replace(/\/$/, "").toUpperCase();
+        return await personPage(await env.DB.prepare("SELECT * FROM members WHERE code = ?").bind(code).first(), env);
+      }
+      /* A bare /some-name — anything with a dot is a file in public/ instead. */
+      const slug = url.pathname.match(/^\/([a-z0-9]+(?:-[a-z0-9]+)*)\/?$/i);
+      if (slug) {
+        const member = await memberBySlug(slug[1].toLowerCase(), env);
+        if (member) return await personPage(member, env);
+      }
     } catch (err) {
       return bad("Server error: " + (err && err.message ? err.message : String(err)), 500);
     }

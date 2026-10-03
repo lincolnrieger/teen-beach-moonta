@@ -21,7 +21,8 @@ push.
   or add your own.
 - **People** — everyone gets a six character code as a QR code *and* a barcode.
   Printable card sheet (important numbers on the back), phone image, or their
-  own web page with their barcode and the numbers to call.
+  own web page at their name (e.g. `/ethan-miotti`) with their QR code,
+  barcode and the numbers to call.
 
 ---
 
@@ -91,15 +92,16 @@ npm run deploy
 Either way you end up with `https://teen-beach-moonta.<your-subdomain>.workers.dev`.
 You can add a custom domain later under the Worker's **Settings → Domains & Routes**.
 
-## 5. Lock it with a staff PIN
+## 5. The staff PIN
+
+The board is locked with the PIN **1907**. Everyone on the desk enters it once
+per device. Everyone's own page (below) stays open without it.
+
+To use a different PIN, set it as a secret — it takes over from 1907:
 
 ```bash
 npx wrangler secret put STAFF_PIN
 ```
-
-Type a PIN when prompted. Everyone on the desk enters it once per device. Without
-this secret the board is open to anyone with the link — fine while you're testing,
-not for the camp.
 
 ## 6. Run the camp
 
@@ -117,10 +119,12 @@ not for the camp.
    Priya Raman, Cove Rover Unit
    ```
 
-2. Send each person `https://your-site/p/THEIRCODE` (**Card** → **Copy their
-   link**). Their page shows their barcode and code (for a USB scanner, or to
-   type in) and the numbers to call. The printed lanyard still has the QR code
-   for the camera.
+2. Send each person their link (**Card** → **Copy their link**). It's their
+   name, like `https://your-site/ethan-miotti`; two people with the same name
+   get their code on the end (`/sam-smith-wk97t4`). Their page shows their QR
+   code (for the camera), barcode and code (for a USB scanner, or to type in)
+   and the numbers to call. The old `https://your-site/p/THEIRCODE` links
+   still work. If you rename someone, their link changes with them.
 3. On the **Scan** tab: pick where they're going, scan, repeat. A $30 USB barcode scanner
    is the most reliable option — it just types the code and presses enter. The
    camera and the search-by-name fallback both work too.
